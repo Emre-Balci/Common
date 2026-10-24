@@ -38,7 +38,7 @@ target_compile_options(common_options INTERFACE
     $<$<CXX_COMPILER_ID:GNU>:${COMMON_GCC_WARNINGS}>
     $<$<BOOL:${COMMON_WARNINGS_AS_ERRORS}>:-Werror>
     # Floating point: never contract a*b+c into FMA behind our back, so results are identical
-    # across optimisation levels and compilers. -ffast-math is rejected in config.hpp.
+    # across optimisation levels and compilers. -ffast-math is rejected in core/config.hpp.
     -ffp-contract=off
     $<$<NOT:$<BOOL:${COMMON_ENABLE_EXCEPTIONS}>>:-fno-exceptions>
     $<$<NOT:$<BOOL:${COMMON_ENABLE_EXCEPTIONS}>>:-fno-rtti>)

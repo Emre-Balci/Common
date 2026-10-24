@@ -6,24 +6,88 @@ real-time path, none of them allocate, block or throw, and every loop has a fixe
 
 ## Components
 
+Headers are grouped by purpose in `include/common/<group>/`, and `#include "common/common.hpp"`
+pulls in everything. Sources and tests mirror the groups in `src/<group>/` and `tests/<group>/`.
+The last column says whether a component may be used on the real-time path.
+
+### core: foundations every other header builds on
+
 | Header | Purpose | RT-path safe |
 |---|---|---|
-| `spsc_queue.hpp` | Wait-free bounded single-producer/single-consumer ring buffer | yes |
-| `mpmc_queue.hpp` | Lock-free bounded multi-producer/multi-consumer queue (Vyukov), bounded CAS retries | yes |
-| `seqlock.hpp` | Single writer, many readers, "latest value" channel (e.g. quotes, sensor state) | yes |
-| `static_vector.hpp` | Fixed-capacity vector with inline storage | yes |
-| `object_pool.hpp` | O(1) fixed-capacity object pool, replaces `new`/`delete` | yes |
-| `ring_buffer.hpp` | Overwrite-oldest circular buffer for sliding windows | yes |
-| `clock.hpp` | `MonotonicClock` (CLOCK_MONOTONIC), absolute `sleep_until`, drift-free `PeriodicTimer` | yes |
-| `latency_histogram.hpp` | O(1) latency recording with min/mean/max/percentiles | `record()` yes |
-| `float.hpp` | FTZ/DAZ, FP exception flags and traps, tolerance compare, saturating float→int | yes |
-| `status.hpp` | `Status` (`[[nodiscard]]` enum) and `Result<T>`, used instead of exceptions | yes |
-| `assert.hpp` | `COMMON_ASSERT`: never throws; calls a handler that must not allocate, then aborts | yes |
-| `thread.hpp` | `RtThread` with explicit policy/priority/affinity, `CpuSet`, current-thread setters | init phase |
-| `memory.hpp` | `mlockall`, glibc malloc tuning, stack pre-faulting | init phase |
-| `spin.hpp` | `cpu_relax()` pause hint for spin loops | yes |
+| `core/config.hpp` | Platform checks (Linux, C++17, no `-ffast-math`), cache-line and page size | yes |
+| `core/status.hpp` | `Status` (`[[nodiscard]]` enum) and `Result<T>`, used instead of exceptions | yes |
+| `core/assert.hpp` | `COMMON_ASSERT`: never throws; calls a handler that must not allocate, then aborts | yes |
 
-`#include "common/common.hpp"` pulls in everything.
+### numeric: arithmetic without undefined behaviour
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `numeric/integer.hpp` | Overflow-checked (`Result<T>`) and saturating integer arithmetic, range-checked integer conversions | yes |
+| `numeric/float.hpp` | FTZ/DAZ, FP exception flags and traps, tolerance compare, saturating float→int | yes |
+
+### containers: fixed capacity, no heap
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `containers/span.hpp` | Non-owning, bounds-checked view of contiguous elements (C++17 stand-in for `std::span`) | yes |
+| `containers/static_vector.hpp` | Fixed-capacity vector with inline storage | yes |
+| `containers/object_pool.hpp` | O(1) fixed-capacity object pool, replaces `new`/`delete` | yes |
+| `containers/ring_buffer.hpp` | Overwrite-oldest circular buffer for sliding windows | yes |
+
+### concurrency: lock-free communication between threads
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `concurrency/spsc_queue.hpp` | Wait-free bounded single-producer/single-consumer ring buffer | yes |
+| `concurrency/mpmc_queue.hpp` | Lock-free bounded multi-producer/multi-consumer queue (Vyukov), bounded CAS retries | yes |
+| `concurrency/seqlock.hpp` | Single writer, many readers, "latest value" channel (e.g. quotes, sensor state) | yes |
+| `concurrency/triple_buffer.hpp` | Wait-free single-writer/single-reader "latest value" channel for any copyable type; reads never fail | yes |
+| `concurrency/spin.hpp` | `cpu_relax()` pause hint for spin loops | yes |
+
+### time: monotonic time and periodic activation
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `time/clock.hpp` | `MonotonicClock` (CLOCK_MONOTONIC), absolute `sleep_until`, drift-free `PeriodicTimer` | yes |
+
+### system: process and thread set-up
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `system/thread.hpp` | `RtThread` with explicit policy/priority/affinity, `CpuSet`, current-thread setters | init phase |
+| `system/memory.hpp` | `mlockall`, glibc malloc tuning, stack pre-faulting | init phase |
+
+### diagnostics: measuring and supervising the real-time phase
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `diagnostics/latency_histogram.hpp` | O(1) latency recording with min/mean/max/percentiles | `record()` yes |
+| `diagnostics/watchdog.hpp` | `Heartbeat` beaten by a supervised thread, `Watchdog` deadline supervision with an expiry handler | `beat()`, `check()` yes |
+
+### control: signal conditioning and feedback control for cyclic loops
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `control/pid_controller.hpp` | `PidController`: anti-windup, derivative on measurement, holds its output on faulty input | yes |
+| `control/low_pass_filter.hpp` | First-order IIR filter, configurable by cut-off frequency | yes |
+| `control/slew_rate_limiter.hpp` | Limits the rate of change of a command | yes |
+| `control/hysteresis.hpp` | Two-threshold switch (Schmitt trigger) | yes |
+| `control/debouncer.hpp` | Accepts a change of a binary input after N stable samples | yes |
+
+### protocol: exchanging messages with other systems
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `protocol/rate_limiter.hpp` | O(1) `TokenBucket` (GCRA) and exact `SlidingWindowLimiter` ("N messages per window") | yes |
+
+### file: file operations for initialisation and non-RT threads
+
+File operations block in the kernel (page cache, storage), so they belong to the initialisation
+phase or to a non-real-time thread that real-time threads feed through a queue.
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `file/file.hpp` | `File`: owning POSIX file handle (full reads/writes, positional I/O, sync, preallocate) and file-system functions | no |
 
 ## Real-time rules this library follows (and you should too)
 
@@ -31,8 +95,9 @@ real-time path, none of them allocate, block or throw, and every loop has a fixe
    real-time phase only uses the operations marked RT-safe above.
 2. **No heap on the RT path.** Containers have compile-time capacity. Queues and pools embed
    their storage, so give them static storage duration, not stack.
-3. **No blocking.** Threads talk through `SpscQueue`, `MpmcQueue` and `SeqLock`, never mutexes.
-   A full queue returns `false`. The RT thread then drops the item or degrades; it never waits.
+3. **No blocking.** Threads talk through `SpscQueue`, `MpmcQueue`, `SeqLock` and `TripleBuffer`,
+   never mutexes. A full queue returns `false`. The RT thread then drops the item or degrades;
+   it never waits.
 4. **No exceptions.** Everything is `noexcept`. Errors are `Status`/`Result<T>`, and contract
    violations go through `COMMON_ASSERT`. Library targets build with `-fno-exceptions -fno-rtti`.
 5. **Explicit scheduling.** `RtThread` creates threads with `PTHREAD_EXPLICIT_SCHED`, so the policy,
@@ -51,9 +116,18 @@ real-time path, none of them allocate, block or throw, and every loop has a fixe
      because a plain cast of an out-of-range value is undefined behaviour.
 8. **Bounded loops.** Every loop has a compile-time or capacity bound, including CAS and seqlock
    retries and EINTR restarts.
+9. **Integer overflow.** Signed overflow is undefined behaviour, and unsigned wrap-around is rarely
+   intended. Where an operand can be out of range, use `checked_add/sub/mul/div` (they return
+   `Result<T>` with `kOverflow`) or the `saturating_*` versions. Convert between integer types
+   with `checked_narrow`/`saturating_narrow`.
+10. **Supervision and fault containment.** Each RT thread beats a `Heartbeat` every cycle. A
+    supervisor thread runs a `Watchdog` and reacts to an expiry, e.g. by commanding a safe state
+    or cancelling orders. The filter, slew-rate limiter and PID controller skip a NaN or
+    infinite sample and hold their output instead of propagating it.
 
 See [examples/rt_periodic_loop.cpp](examples/rt_periodic_loop.cpp) for the whole pattern: a
-1 kHz RT loop that measures its own wake-up latency and hands data to a non-RT thread.
+1 kHz RT loop that measures its own wake-up latency, filters it, and hands data to a non-RT
+thread that also supervises it with a watchdog.
 
 ## Building (WSL / Linux)
 
@@ -123,6 +197,8 @@ Documented deviations (each is also marked in the code):
 | Rule | Where | Rationale |
 |---|---|---|
 | 19.0.2 function-like macros | `COMMON_ASSERT` | Needs call-site file/line and the expression text |
+| 15.1.3 implicit converting constructors | `Span` | Like `std::span`: a container or `Span<T>` can be passed where a span (of const) is expected; it only creates a view |
+| 30.0.1 `<cstdio>` | `rename_file` | `rename()` is declared in `<cstdio>`, but it is the POSIX call that replaces a file atomically; no stream I/O is used |
 | 21.6.3 advanced memory management | `StaticVector`, `ObjectPool` | Placement new into owned, aligned inline storage; this is what removes heap use |
 | 8.2.5 `reinterpret_cast` | `StaticVector`, `ObjectPool` | Access to objects created in raw storage (with `std::launder`) and an address range check |
 | 10.4.1 `asm` | `cpu_relax`, FPCR access (AArch64 only) | No intrinsic exists |

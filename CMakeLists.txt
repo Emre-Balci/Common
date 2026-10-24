@@ -31,16 +31,20 @@ include(cmake/CommonOptions.cmake)
 
 find_package(Threads REQUIRED)
 
+# Sources mirror the header groups in include/common/<group>/.
 add_library(common
-    src/assert.cpp
-    src/clock.cpp
-    src/float.cpp
-    src/memory.cpp
-    src/thread.cpp)
+    src/core/assert.cpp
+    src/file/file.cpp
+    src/numeric/float.cpp
+    src/protocol/rate_limiter.cpp
+    src/system/memory.cpp
+    src/system/thread.cpp
+    src/time/clock.cpp)
 add_library(common::common ALIAS common)
 
-target_include_directories(common PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_include_directories(common
+    PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(common PUBLIC cxx_std_17)
 target_link_libraries(common
     PUBLIC Threads::Threads
