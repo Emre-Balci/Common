@@ -29,6 +29,7 @@ enum class [[nodiscard]] Status : std::uint8_t {
     kAlreadyExists,
     kOutOfRange,
     kTimeout,
+    kDisconnected,
 };
 
 [[nodiscard]] constexpr bool is_ok(const Status status) noexcept {
@@ -82,6 +83,9 @@ enum class [[nodiscard]] Status : std::uint8_t {
             break;
         case Status::kTimeout:
             text = "timed out";
+            break;
+        case Status::kDisconnected:
+            text = "disconnected";
             break;
     }
     return text;

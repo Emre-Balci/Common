@@ -31,6 +31,7 @@ The last column says whether a component may be used on the real-time path.
 |---|---|---|
 | `containers/span.hpp` | Non-owning, bounds-checked view of contiguous elements (C++17 stand-in for `std::span`) | yes |
 | `containers/static_vector.hpp` | Fixed-capacity vector with inline storage | yes |
+| `containers/static_string.hpp` | Fixed-capacity NUL-terminated string; appends that do not fit fail as a whole | yes |
 | `containers/object_pool.hpp` | O(1) fixed-capacity object pool, replaces `new`/`delete` | yes |
 | `containers/ring_buffer.hpp` | Overwrite-oldest circular buffer for sliding windows | yes |
 
@@ -49,6 +50,7 @@ The last column says whether a component may be used on the real-time path.
 | Header | Purpose | RT-path safe |
 |---|---|---|
 | `time/clock.hpp` | `MonotonicClock` (CLOCK_MONOTONIC), absolute `sleep_until`, drift-free `PeriodicTimer` | yes |
+| `time/deadline.hpp` | `Deadline`: one absolute timeout shared by the steps of an operation, saturating, with `never()` | yes |
 
 ### system: process and thread set-up
 
@@ -79,15 +81,20 @@ The last column says whether a component may be used on the real-time path.
 | Header | Purpose | RT-path safe |
 |---|---|---|
 | `protocol/rate_limiter.hpp` | O(1) `TokenBucket` (GCRA) and exact `SlidingWindowLimiter` ("N messages per window") | yes |
+| `protocol/delimited_framer.hpp` | `DelimitedFramer`: reassembles delimiter-terminated frames (e.g. lines) from a byte stream, drops ignored bytes, truncates overlong frames and resynchronises; `ByteSet` | yes |
+| `protocol/text.hpp` | Text matching (`trim`, `starts_with`, `find`, ...), checked decimal/hex parsing (`parse_hex`, `decode_hex_bytes`) and formatting into buffers or a `StaticString` | yes |
+| `protocol/byte_order.hpp` | Bounds-checked big/little-endian field reads and writes, MSB/LSB-first bit tests | yes |
+| `protocol/backoff.hpp` | `ExponentialBackoff`: doubling, capped, bounded retry delays (e.g. reconnecting a device) | yes |
 
 ### file: file operations for initialisation and non-RT threads
 
-File operations block in the kernel (page cache, storage), so they belong to the initialisation
-phase or to a non-real-time thread that real-time threads feed through a queue.
+File and device operations block in the kernel (page cache, storage, serial lines), so they belong
+to the initialisation phase or to a non-real-time thread that real-time threads feed through a queue.
 
 | Header | Purpose | RT-path safe |
 |---|---|---|
 | `file/file.hpp` | `File`: owning POSIX file handle (full reads/writes, positional I/O, sync, preallocate) and file-system functions | no |
+| `file/serial_port.hpp` | `SerialPort`: raw-mode UART/USB-serial/pty with baud, parity, stop bits, RTS/CTS and exclusive access; reads and writes bounded by a `Deadline`; reports an unplugged device as `kDisconnected` | no |
 
 ## Real-time rules this library follows (and you should too)
 

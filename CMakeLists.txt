@@ -35,6 +35,7 @@ find_package(Threads REQUIRED)
 add_library(common
     src/core/assert.cpp
     src/file/file.cpp
+    src/file/serial_port.cpp
     src/numeric/float.cpp
     src/protocol/rate_limiter.cpp
     src/system/memory.cpp

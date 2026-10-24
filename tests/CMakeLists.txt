@@ -6,16 +6,23 @@ add_executable(common_tests
     concurrency/test_triple_buffer.cpp
     containers/test_containers.cpp
     containers/test_span.cpp
+    containers/test_static_string.cpp
     control/test_control.cpp
     core/test_status.cpp
     diagnostics/test_latency_histogram.cpp
     diagnostics/test_watchdog.cpp
     file/test_file.cpp
+    file/test_serial_port.cpp
     numeric/test_float.cpp
     numeric/test_integer.cpp
+    protocol/test_backoff.cpp
+    protocol/test_byte_order.cpp
+    protocol/test_delimited_framer.cpp
     protocol/test_rate_limiter.cpp
+    protocol/test_text.cpp
     system/test_thread.cpp
-    time/test_clock.cpp)
+    time/test_clock.cpp
+    time/test_deadline.cpp)
 
 # test_framework.hpp lives here; tests in group subdirectories include it by name.
 target_include_directories(common_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

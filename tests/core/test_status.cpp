@@ -31,4 +31,5 @@ TEST_CASE(result_success_and_failure) {
     CHECK(std::strcmp(common::to_string(common::Status::kAlreadyExists), "already exists") == 0);
     CHECK(std::strcmp(common::to_string(common::Status::kOutOfRange), "out of range") == 0);
     CHECK(std::strcmp(common::to_string(common::Status::kTimeout), "timed out") == 0);
+    CHECK(std::strcmp(common::to_string(common::Status::kDisconnected), "disconnected") == 0);
 }
