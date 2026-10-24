@@ -42,8 +42,21 @@ template <typename T>
 inline constexpr bool kIsUnsignedInteger{std::is_integral<T>::value && std::is_unsigned<T>::value &&
                                          (!std::is_same<T, bool>::value)};
 
+// Characters are converted to and from digits through the tables below, and are otherwise only
+// compared for equality (std::string_view::find() included), so the numerical value of a character
+// is never used (MISRA C++:2023 Rule 7.0.3).
+
+/// Decimal digits, indexed by their value.
+inline constexpr std::string_view kDecimalDigits{"0123456789"};
+
 /// Upper-case hexadecimal digits, indexed by their value.
 inline constexpr std::string_view kHexDigits{"0123456789ABCDEF"};
+
+/// Lower-case hexadecimal digits, indexed by their value.
+inline constexpr std::string_view kLowerHexDigits{"0123456789abcdef"};
+
+/// The white-space characters is_space() accepts.
+inline constexpr std::string_view kSpaces{" \t\n\v\f\r"};
 
 /// Characters needed for any std::uint64_t: 20 decimal or 16 hexadecimal digits.
 inline constexpr std::size_t kMaxDigits{20U};
@@ -56,37 +69,38 @@ inline constexpr std::uint32_t kBitsPerHexDigit{4U};
     return kHexDigits[value & 0xFU];
 }
 
+/// @return true if @p character occurs in @p characters.
+[[nodiscard]] constexpr bool is_one_of(const std::string_view characters, const char character) noexcept {
+    return characters.find(character) != std::string_view::npos;
+}
+
 }  // namespace text
 }  // namespace detail
 
 /// @return true for the ASCII white-space characters: space, \\t, \\n, \\v, \\f and \\r.
 [[nodiscard]] constexpr bool is_space(const char character) noexcept {
-    return (character == ' ') || ((character >= '\t') && (character <= '\r'));
+    return detail::text::is_one_of(detail::text::kSpaces, character);
 }
 
 [[nodiscard]] constexpr bool is_decimal_digit(const char character) noexcept {
-    return (character >= '0') && (character <= '9');
+    return detail::text::is_one_of(detail::text::kDecimalDigits, character);
 }
 
 /// @return true for 0-9, a-f and A-F.
 [[nodiscard]] constexpr bool is_hex_digit(const char character) noexcept {
-    return is_decimal_digit(character) || ((character >= 'a') && (character <= 'f')) ||
-           ((character >= 'A') && (character <= 'F'));
+    return detail::text::is_one_of(detail::text::kHexDigits, character) ||
+           detail::text::is_one_of(detail::text::kLowerHexDigits, character);
 }
 
 /// @return the value (0 to 15) of the hexadecimal digit @p character; kInvalidArgument if it is not one.
 [[nodiscard]] constexpr Result<std::uint8_t> hex_digit_value(const char character) noexcept {
-    Result<std::uint8_t> result{Result<std::uint8_t>::failure(Status::kInvalidArgument)};
-    if (is_decimal_digit(character)) {
-        result = Result<std::uint8_t>::success(static_cast<std::uint8_t>(character - '0'));
-    } else if ((character >= 'a') && (character <= 'f')) {
-        result = Result<std::uint8_t>::success(static_cast<std::uint8_t>((character - 'a') + 10));
-    } else if ((character >= 'A') && (character <= 'F')) {
-        result = Result<std::uint8_t>::success(static_cast<std::uint8_t>((character - 'A') + 10));
-    } else {
-        // Not a hexadecimal digit.
+    // A digit's position in its table is its value.
+    std::size_t value{detail::text::kHexDigits.find(character)};
+    if (value == std::string_view::npos) {
+        value = detail::text::kLowerHexDigits.find(character);
     }
-    return result;
+    return (value != std::string_view::npos) ? Result<std::uint8_t>::success(static_cast<std::uint8_t>(value))
+                                             : Result<std::uint8_t>::failure(Status::kInvalidArgument);
 }
 
 /// @return @p text without leading and trailing white space (see is_space()).
@@ -154,11 +168,12 @@ template <typename T>
     Status status{text.empty() ? Status::kInvalidArgument : Status::kOk};
     T value{0U};
     for (std::size_t index{0U}; is_ok(status) && (index < text.size()); ++index) {
-        const char character{text[index]};
-        if (!is_decimal_digit(character)) {
+        // A digit's position in the table is its value.
+        const std::size_t position{detail::text::kDecimalDigits.find(text[index])};
+        if (position == std::string_view::npos) {
             status = Status::kInvalidArgument;
         } else {
-            const T digit{static_cast<T>(character - '0')};
+            const T digit{static_cast<T>(position)};
             if (value > static_cast<T>((kMax - digit) / kBase)) {
                 status = Status::kOverflow;
             } else {
@@ -235,7 +250,7 @@ template <typename T>
     std::size_t length{0U};
     std::array<char, detail::text::kMaxDigits> reversed{};
     do {
-        reversed[length] = static_cast<char>('0' + static_cast<char>(rest % 10U));
+        reversed[length] = detail::text::kDecimalDigits[rest % 10U];
         rest /= 10U;
         ++length;
     } while ((rest != 0U) && (length < reversed.size()));

@@ -1,6 +1,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 #include "common/containers/span.hpp"
@@ -43,6 +44,48 @@ TEST_CASE(text_classification_and_trim) {
     CHECK(view_of(common::trim(span_of("OK"))) == "OK");
     CHECK(common::trim(span_of(" \r\n\t")).empty());
     CHECK(common::trim(common::Span<const char>{}).empty());
+}
+
+TEST_CASE(text_classification_of_every_character) {
+    // The expected values come from the ASCII codes; the library itself never uses them.
+    std::uint32_t mismatches{0U};
+    for (std::uint32_t code{0U}; code < 256U; ++code) {
+        const char character{static_cast<char>(code)};
+        const bool digit{(code >= 0x30U) && (code <= 0x39U)};
+        const bool upper{(code >= 0x41U) && (code <= 0x46U)};
+        const bool lower{(code >= 0x61U) && (code <= 0x66U)};
+        const bool space{(code == 0x20U) || ((code >= 0x09U) && (code <= 0x0DU))};
+        mismatches += (common::is_decimal_digit(character) == digit) ? 0U : 1U;
+        mismatches += (common::is_hex_digit(character) == (digit || upper || lower)) ? 0U : 1U;
+        mismatches += (common::is_space(character) == space) ? 0U : 1U;
+
+        std::uint32_t expected{99U};
+        if (digit) {
+            expected = code - 0x30U;
+        } else if (upper) {
+            expected = (code - 0x41U) + 10U;
+        } else if (lower) {
+            expected = (code - 0x61U) + 10U;
+        } else {
+            // Not a hexadecimal digit.
+        }
+        const common::Result<std::uint8_t> value{common::hex_digit_value(character)};
+        mismatches += (value.has_value() == (expected != 99U)) ? 0U : 1U;
+        mismatches += (std::uint32_t{value.value_or(99U)} == expected) ? 0U : 1U;
+
+        const common::Result<std::uint8_t> parsed{
+            common::parse_unsigned<std::uint8_t>(common::Span<const char>{&character, 1U})};
+        mismatches += (parsed.has_value() == digit) ? 0U : 1U;
+        mismatches += (!digit || (std::uint32_t{parsed.value_or(99U)} == (code - 0x30U))) ? 0U : 1U;
+    }
+    CHECK(mismatches == 0U);
+
+    // Formatting through the digit tables matches std::to_string.
+    std::array<char, 24U> buffer{};
+    for (std::uint32_t value{0U}; value < 2000U; ++value) {
+        const common::Result<std::size_t> length{common::format_unsigned(value * 7919U, common::Span<char>{buffer})};
+        CHECK(view_of(common::Span<char>{buffer}.first(length.value_or(0U))) == std::to_string(value * 7919U));
+    }
 }
 
 TEST_CASE(text_matching) {

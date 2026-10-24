@@ -188,6 +188,18 @@ TEST_CASE(logger_text_arguments) {
     CHECK(message("tab\there") == "tab\there");
 }
 
+TEST_CASE(logger_sanitizes_exactly_the_control_characters) {
+    std::uint32_t mismatches{0U};
+    for (std::uint32_t code{0U}; code < 256U; ++code) {
+        const char character{static_cast<char>(code)};
+        const bool control{(code < 0x20U) || (code == 0x7FU)};
+        const std::string expected{control ? std::string{"?"} : std::string(1U, character)};
+        mismatches += (message("{}", character) == expected) ? 0U : 1U;
+        mismatches += (message("{}", std::string_view{&character, 1U}) == expected) ? 0U : 1U;
+    }
+    CHECK(mismatches == 0U);
+}
+
 TEST_CASE(logger_doubles_match_printf) {
     const std::array<double, 22U> samples{{0.0,
                                            0.1,

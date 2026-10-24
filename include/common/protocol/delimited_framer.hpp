@@ -15,9 +15,25 @@
 
 namespace common {
 
-/// Set of byte values, e.g. the delimiters of a protocol. 32 bytes, constexpr, O(1) lookup.
+namespace detail {
+namespace delimited_framer {
+
+/// The byte that represents @p character in a byte stream: the character's object representation,
+/// read through unsigned char, which may access the bytes of any object (exception to MISRA C++:2023
+/// Rule 8.2.5). The character is never converted to an integer, so its numerical value is not used
+/// (Rule 7.0.3).
+[[nodiscard]] inline std::uint8_t byte_of(const char& character) noexcept {
+    return *reinterpret_cast<const std::uint8_t*>(&character);
+}
+
+}  // namespace delimited_framer
+}  // namespace detail
+
+/// Set of byte values, e.g. the delimiters of a protocol. 32 bytes, O(1) lookup; the operations on
+/// byte values are constexpr. A character stands for the byte that represents it in a byte stream,
+/// e.g. '\r' for the byte a device sends at the end of a line.
 /// @code
-///   constexpr common::ByteSet kDelimiters{common::ByteSet{}.with('\r').with('>')};
+///   const common::ByteSet delimiters{common::ByteSet{}.with('\r').with('>')};
 /// @endcode
 class ByteSet final {
 public:
@@ -31,17 +47,18 @@ public:
         return result;
     }
 
-    /// @return a copy of this set with the byte value of @p character added.
-    [[nodiscard]] constexpr ByteSet with(const char character) const noexcept {
-        return with(static_cast<std::uint8_t>(character));
+    /// @return a copy of this set with the byte that represents @p character added.
+    [[nodiscard]] ByteSet with(const char character) const noexcept {
+        return with(detail::delimited_framer::byte_of(character));
     }
 
     [[nodiscard]] constexpr bool contains(const std::uint8_t value) const noexcept {
         return (words_[word(value)] & bit(value)) != 0U;
     }
 
-    [[nodiscard]] constexpr bool contains(const char character) const noexcept {
-        return contains(static_cast<std::uint8_t>(character));
+    /// @return true if the byte that represents @p character is in the set.
+    [[nodiscard]] bool contains(const char character) const noexcept {
+        return contains(detail::delimited_framer::byte_of(character));
     }
 
     [[nodiscard]] constexpr bool empty() const noexcept {
@@ -96,7 +113,7 @@ private:
 ///   }
 /// @endcode
 /// Empty frames are reported too (e.g. the empty frame before ">", or between "\r\r"); skip them
-/// with frame().empty() when they carry no meaning.
+/// with text().empty() when they carry no meaning.
 ///
 /// Overlong frames: a frame holds at most MaxFrameSize bytes. Further bytes are dropped until the
 /// next delimiter, and the frame is then reported with truncated() set, holding its first
@@ -108,7 +125,8 @@ private:
 template <std::size_t MaxFrameSize>
 class DelimitedFramer final {
     static_assert(MaxFrameSize > 0U, "MaxFrameSize must be positive");
-    // bytes() views the characters as bytes, which is valid because std::uint8_t is unsigned char.
+    // text() and delimiter() view the received bytes as characters, which is valid because char may
+    // access the bytes of any object.
     static_assert(std::is_same<std::uint8_t, unsigned char>::value, "std::uint8_t must be unsigned char");
 
 public:
@@ -142,7 +160,7 @@ public:
             } else if (ignored_.contains(value)) {
                 // Dropped wherever it occurs.
             } else if (size_ < MaxFrameSize) {
-                buffer_[size_] = static_cast<char>(value);
+                buffer_[size_] = value;
                 ++size_;
             } else {
                 truncated_ = true;
@@ -157,24 +175,25 @@ public:
         return has_frame_;
     }
 
-    /// The completed frame as text, without its delimiter. @pre has_frame()
-    [[nodiscard]] constexpr Span<const char> text() const noexcept {
+    /// The completed frame as text, without its delimiter: the received bytes viewed as characters.
+    /// @pre has_frame()
+    [[nodiscard]] Span<const char> text() const noexcept {
         COMMON_ASSERT(has_frame_);
-        return Span<const char>{buffer_.data(), size_};
+        // char may access the bytes of any object (exception to MISRA C++:2023 Rule 8.2.5).
+        return Span<const char>{reinterpret_cast<const char*>(buffer_.data()), size_};
     }
 
     /// The completed frame as bytes, without its delimiter. @pre has_frame()
-    [[nodiscard]] Span<const std::uint8_t> bytes() const noexcept {
+    [[nodiscard]] constexpr Span<const std::uint8_t> bytes() const noexcept {
         COMMON_ASSERT(has_frame_);
-        // A pointer to unsigned char may access the bytes of any object (exception to MISRA C++:2023
-        // Rule 8.2.5).
-        return Span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(buffer_.data()), size_};
+        return Span<const std::uint8_t>{buffer_.data(), size_};
     }
 
-    /// The delimiter byte that ended the frame. @pre has_frame()
-    [[nodiscard]] constexpr char delimiter() const noexcept {
+    /// The character that the delimiter byte ending the frame represents, e.g. '>'. @pre has_frame()
+    [[nodiscard]] char delimiter() const noexcept {
         COMMON_ASSERT(has_frame_);
-        return static_cast<char>(delimiter_);
+        // char may access the bytes of any object (exception to MISRA C++:2023 Rule 8.2.5).
+        return *reinterpret_cast<const char*>(&delimiter_);
     }
 
     /// @return true if the completed frame was longer than MaxFrameSize, so its end was dropped.
@@ -208,7 +227,7 @@ private:
         truncated_ = false;
     }
 
-    std::array<char, MaxFrameSize> buffer_{};
+    std::array<std::uint8_t, MaxFrameSize> buffer_{};
     ByteSet delimiters_;
     ByteSet ignored_;
     std::size_t size_{0U};

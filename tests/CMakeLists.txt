@@ -10,6 +10,7 @@ add_executable(common_tests
     containers/test_span.cpp
     containers/test_static_string.cpp
     control/test_control.cpp
+    core/test_assert.cpp
     core/test_status.cpp
     diagnostics/test_latency_histogram.cpp
     diagnostics/test_logger.cpp

@@ -204,6 +204,9 @@ The code targets **MISRA C++:2023**, which is based on C++17. In practice that m
 - braces on every branch and no implicit fall-through
 - `noexcept` throughout and `[[nodiscard]]` results
 - no dynamic memory, `final` classes, and no C-style arrays in the library
+- the numerical value of a character is never used (Rule 7.0.3): characters are only compared with
+  `==` and `!=`, digits are converted through lookup tables, and bytes and characters meet only as
+  two views of the same storage
 
 GCC/Clang warnings and `.clang-tidy` only *approximate* the rule set. Compliance must be
 confirmed with a qualified checker, such as Helix QAC, Parasoft C++test, PC-lint Plus or

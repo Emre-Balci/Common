@@ -1,3 +1,4 @@
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -43,15 +44,48 @@ const common::ByteSet kIgnored{common::ByteSet{}.with('\n').with('\0')};
 }  // namespace
 
 TEST_CASE(byte_set) {
-    constexpr common::ByteSet kSet{common::ByteSet{}.with('a').with(std::uint8_t{0xFFU}).with('\0')};
-    static_assert(kSet.contains('a'), "constexpr");
-    CHECK(kSet.contains(std::uint8_t{0xFFU}));
-    CHECK(kSet.contains('\0'));
-    CHECK(!kSet.contains('b'));
-    CHECK(!kSet.empty());
+    constexpr common::ByteSet kBytes{common::ByteSet{}.with(std::uint8_t{0x0DU}).with(std::uint8_t{0xFFU})};
+    static_assert(kBytes.contains(std::uint8_t{0x0DU}), "constexpr for byte values");
+    static_assert(!kBytes.contains(std::uint8_t{0x0AU}), "constexpr for byte values");
+    const common::ByteSet set{common::ByteSet{}.with('a').with(std::uint8_t{0xFFU}).with('\0')};
+    CHECK(set.contains('a'));
+    CHECK(set.contains(std::uint8_t{0xFFU}));
+    CHECK(set.contains('\0'));
+    CHECK(!set.contains('b'));
+    CHECK(!set.empty());
     CHECK(common::ByteSet{}.empty());
-    CHECK(!kSet.disjoint(common::ByteSet{}.with('a')));
-    CHECK(kSet.disjoint(common::ByteSet{}.with('b')));
+    CHECK(!set.disjoint(common::ByteSet{}.with('a')));
+    CHECK(set.disjoint(common::ByteSet{}.with('b')));
+    // A character stands for the byte that represents it.
+    CHECK(kBytes.contains('\r'));
+    CHECK(kBytes.contains('\xFF'));
+}
+
+TEST_CASE(byte_set_and_framer_map_every_character_to_its_byte) {
+    std::uint32_t mismatches{0U};
+    for (std::uint32_t code{0U}; code < 256U; ++code) {
+        const char character{static_cast<char>(code)};
+        const std::uint8_t byte{static_cast<std::uint8_t>(code)};
+        const common::ByteSet from_character{common::ByteSet{}.with(character)};
+        mismatches += from_character.contains(byte) ? 0U : 1U;
+        mismatches += from_character.contains(static_cast<std::uint8_t>((code + 1U) % 256U)) ? 1U : 0U;
+        mismatches += common::ByteSet{}.with(byte).contains(character) ? 0U : 1U;
+
+        // The byte as delimiter ends a frame, and delimiter() returns the character again; the same
+        // byte as content comes back unchanged through text() and bytes().
+        common::DelimitedFramer<4U> framer{from_character, common::ByteSet{}};
+        const std::array<std::uint8_t, 2U> content{{static_cast<std::uint8_t>((code + 1U) % 256U), byte}};
+        mismatches += (framer.consume(content) == 2U) ? 0U : 1U;
+        if (framer.has_frame()) {
+            mismatches += (framer.delimiter() == character) ? 0U : 1U;
+            mismatches += (framer.text().size() == 1U) ? 0U : 1U;
+            mismatches += (framer.text()[0U] == static_cast<char>((code + 1U) % 256U)) ? 0U : 1U;
+            mismatches += (framer.bytes()[0U] == content[0U]) ? 0U : 1U;
+        } else {
+            ++mismatches;
+        }
+    }
+    CHECK(mismatches == 0U);
 }
 
 TEST_CASE(delimited_framer_device_responses) {

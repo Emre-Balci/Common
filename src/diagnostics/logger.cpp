@@ -126,10 +126,16 @@ private:
     std::size_t length_{0U};
 };
 
-/// @return true for the characters a text argument must not emit: 0x00-0x1F and 0x7F.
+// The characters a text argument must not emit: the C0 control characters 0x00 to 0x1F and DEL
+// (0x7F). They are matched by equality, so the numerical value of a character is never used
+// (MISRA C++:2023 Rule 7.0.3). The explicit length keeps the leading NUL.
+constexpr std::string_view kControlCharacters{
+    "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F"
+    "\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F\x7F",
+    33U};
+
 [[nodiscard]] bool is_control_character(const char character) noexcept {
-    const std::uint8_t code{static_cast<std::uint8_t>(character)};
-    return (code < 0x20U) || (code == 0x7FU);
+    return kControlCharacters.find(character) != std::string_view::npos;
 }
 
 void put_sanitized(LineWriter& line, const char character) noexcept {

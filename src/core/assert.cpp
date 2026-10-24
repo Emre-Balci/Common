@@ -11,6 +11,10 @@
 namespace common {
 namespace {
 
+// Digits are written through this table, so the numerical value of a character is never used
+// (MISRA C++:2023 Rule 7.0.3).
+constexpr std::array<char, 10U> kDigitChars{{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'}};
+
 // write(2) is async-signal-safe and does not allocate, unlike stdio.
 void write_stderr(const char* const text) noexcept {
     if (text != nullptr) {
@@ -25,7 +29,7 @@ void write_decimal(const std::int32_t value) noexcept {
     std::uint32_t remaining{(value < 0) ? 0U : static_cast<std::uint32_t>(value)};
     do {
         --pos;
-        buffer[pos] = static_cast<char>(static_cast<std::uint32_t>('0') + (remaining % 10U));
+        buffer[pos] = kDigitChars[remaining % 10U];
         remaining /= 10U;
     } while ((remaining != 0U) && (pos > 0U));
     write_stderr(&buffer[pos]);
