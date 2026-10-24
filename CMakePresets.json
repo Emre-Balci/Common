@@ -1,0 +1,77 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}"
+        },
+        {
+            "name": "gcc-debug",
+            "inherits": "base",
+            "cacheVariables": { "CMAKE_CXX_COMPILER": "g++", "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
+            "name": "gcc-release",
+            "inherits": "base",
+            "cacheVariables": { "CMAKE_CXX_COMPILER": "g++", "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+        },
+        {
+            "name": "clang-debug",
+            "inherits": "base",
+            "cacheVariables": { "CMAKE_CXX_COMPILER": "clang++", "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
+            "name": "clang-release",
+            "inherits": "base",
+            "cacheVariables": { "CMAKE_CXX_COMPILER": "clang++", "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+        },
+        {
+            "name": "asan",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "COMMON_SANITIZER": "address,undefined"
+            }
+        },
+        {
+            "name": "tsan",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "COMMON_SANITIZER": "thread"
+            }
+        },
+        {
+            "name": "tidy",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "COMMON_ENABLE_CLANG_TIDY": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        { "name": "gcc-debug", "configurePreset": "gcc-debug" },
+        { "name": "gcc-release", "configurePreset": "gcc-release" },
+        { "name": "clang-debug", "configurePreset": "clang-debug" },
+        { "name": "clang-release", "configurePreset": "clang-release" },
+        { "name": "asan", "configurePreset": "asan" },
+        { "name": "tsan", "configurePreset": "tsan" },
+        { "name": "tidy", "configurePreset": "tidy" }
+    ],
+    "testPresets": [
+        { "name": "base", "hidden": true, "output": { "outputOnFailure": true } },
+        { "name": "gcc-debug", "inherits": "base", "configurePreset": "gcc-debug" },
+        { "name": "gcc-release", "inherits": "base", "configurePreset": "gcc-release" },
+        { "name": "clang-debug", "inherits": "base", "configurePreset": "clang-debug" },
+        { "name": "clang-release", "inherits": "base", "configurePreset": "clang-release" },
+        { "name": "asan", "inherits": "base", "configurePreset": "asan" },
+        { "name": "tsan", "inherits": "base", "configurePreset": "tsan" }
+    ]
+}
