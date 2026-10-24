@@ -34,8 +34,11 @@ find_package(Threads REQUIRED)
 # Sources mirror the header groups in include/common/<group>/.
 add_library(common
     src/core/assert.cpp
+    src/diagnostics/logger.cpp
     src/file/file.cpp
+    src/file/mapped_file.cpp
     src/file/serial_port.cpp
+    src/file/whole_file.cpp
     src/numeric/float.cpp
     src/protocol/rate_limiter.cpp
     src/system/memory.cpp

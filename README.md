@@ -24,6 +24,7 @@ The last column says whether a component may be used on the real-time path.
 |---|---|---|
 | `numeric/integer.hpp` | Overflow-checked (`Result<T>`) and saturating integer arithmetic, range-checked integer conversions | yes |
 | `numeric/float.hpp` | FTZ/DAZ, FP exception flags and traps, tolerance compare, saturating float→int | yes |
+| `numeric/decimal.hpp` | `Decimal<N>`: exact fixed-point decimals (prices, quantities) with checked arithmetic, an explicit `RoundingMode` for every rounding, and text parsing and formatting | yes |
 
 ### containers: fixed capacity, no heap
 
@@ -34,6 +35,7 @@ The last column says whether a component may be used on the real-time path.
 | `containers/static_string.hpp` | Fixed-capacity NUL-terminated string; appends that do not fit fail as a whole | yes |
 | `containers/object_pool.hpp` | O(1) fixed-capacity object pool, replaces `new`/`delete` | yes |
 | `containers/ring_buffer.hpp` | Overwrite-oldest circular buffer for sliding windows | yes |
+| `containers/intrusive_list.hpp` | O(1) doubly-linked list whose links live in the elements (one hook per list an element can be in), e.g. for elements from an `ObjectPool` | yes |
 
 ### concurrency: lock-free communication between threads
 
@@ -43,6 +45,7 @@ The last column says whether a component may be used on the real-time path.
 | `concurrency/mpmc_queue.hpp` | Lock-free bounded multi-producer/multi-consumer queue (Vyukov), bounded CAS retries | yes |
 | `concurrency/seqlock.hpp` | Single writer, many readers, "latest value" channel (e.g. quotes, sensor state) | yes |
 | `concurrency/triple_buffer.hpp` | Wait-free single-writer/single-reader "latest value" channel for any copyable type; reads never fail | yes |
+| `concurrency/broadcast_queue.hpp` | Wait-free single-producer/multi-consumer broadcast; each consumer has its own cursor, and a slow one skips the oldest messages with an exact loss count | yes |
 | `concurrency/spin.hpp` | `cpu_relax()` pause hint for spin loops | yes |
 
 ### time: monotonic time and periodic activation
@@ -51,6 +54,7 @@ The last column says whether a component may be used on the real-time path.
 |---|---|---|
 | `time/clock.hpp` | `MonotonicClock` (CLOCK_MONOTONIC), absolute `sleep_until`, drift-free `PeriodicTimer` | yes |
 | `time/deadline.hpp` | `Deadline`: one absolute timeout shared by the steps of an operation, saturating, with `never()` | yes |
+| `time/timer_wheel.hpp` | `TimerWheel`: many timeouts with O(1) schedule, cancel and reschedule; never fires early, and runs a bounded number of callbacks per `advance()` | yes |
 
 ### system: process and thread set-up
 
@@ -65,6 +69,7 @@ The last column says whether a component may be used on the real-time path.
 |---|---|---|
 | `diagnostics/latency_histogram.hpp` | O(1) latency recording with min/mean/max/percentiles | `record()` yes |
 | `diagnostics/watchdog.hpp` | `Heartbeat` beaten by a supervised thread, `Watchdog` deadline supervision with an expiry handler | `beat()`, `check()` yes |
+| `diagnostics/logger.hpp` | `Logger`: a real-time thread queues compact binary log records (wait-free, no formatting); a non-real-time thread formats and writes them, and reports dropped records | `log()` yes, `drain()` no |
 
 ### control: signal conditioning and feedback control for cyclic loops
 
@@ -81,6 +86,7 @@ The last column says whether a component may be used on the real-time path.
 | Header | Purpose | RT-path safe |
 |---|---|---|
 | `protocol/rate_limiter.hpp` | O(1) `TokenBucket` (GCRA) and exact `SlidingWindowLimiter` ("N messages per window") | yes |
+| `protocol/sequence_tracker.hpp` | `SequenceTracker`: classifies sequence numbers and E2E alive counters as in order, gap, jump, duplicate, stale or invalid, with statistics | yes |
 | `protocol/delimited_framer.hpp` | `DelimitedFramer`: reassembles delimiter-terminated frames (e.g. lines) from a byte stream, drops ignored bytes, truncates overlong frames and resynchronises; `ByteSet` | yes |
 | `protocol/text.hpp` | Text matching (`trim`, `starts_with`, `find`, ...), checked decimal/hex parsing (`parse_hex`, `decode_hex_bytes`) and formatting into buffers or a `StaticString` | yes |
 | `protocol/byte_order.hpp` | Bounds-checked big/little-endian field reads and writes, MSB/LSB-first bit tests | yes |
@@ -94,6 +100,9 @@ to the initialisation phase or to a non-real-time thread that real-time threads 
 | Header | Purpose | RT-path safe |
 |---|---|---|
 | `file/file.hpp` | `File`: owning POSIX file handle (full reads/writes, positional I/O, sync, preallocate) and file-system functions | no |
+| `file/whole_file.hpp` | `read_file`/`read_text_file` into a caller's buffer (also /proc and /sys), `write_file`, and crash-safe `write_file_atomically` | no |
+| `file/line_reader.hpp` | `LineReader`: line-by-line reading of a text file through a fixed buffer (`\n` and `\r\n`) | no |
+| `file/mapped_file.hpp` | `MappedFile`: memory mapping set up during initialisation, e.g. for reference data or a persistent state block | reading a populated, locked mapping yes |
 | `file/serial_port.hpp` | `SerialPort`: raw-mode UART/USB-serial/pty with baud, parity, stop bits, RTS/CTS and exclusive access; reads and writes bounded by a `Deadline`; reports an unplugged device as `kDisconnected` | no |
 
 ## Real-time rules this library follows (and you should too)
@@ -102,9 +111,10 @@ to the initialisation phase or to a non-real-time thread that real-time threads 
    real-time phase only uses the operations marked RT-safe above.
 2. **No heap on the RT path.** Containers have compile-time capacity. Queues and pools embed
    their storage, so give them static storage duration, not stack.
-3. **No blocking.** Threads talk through `SpscQueue`, `MpmcQueue`, `SeqLock` and `TripleBuffer`,
-   never mutexes. A full queue returns `false`. The RT thread then drops the item or degrades;
-   it never waits.
+3. **No blocking.** Threads talk through `SpscQueue`, `MpmcQueue`, `SeqLock`, `TripleBuffer` and
+   `BroadcastQueue`, never mutexes. A full queue returns `false`. The RT thread then drops the item
+   or degrades; it never waits. An RT thread logs through a `Logger`, which queues the record and
+   leaves formatting and I/O to a non-RT thread.
 4. **No exceptions.** Everything is `noexcept`. Errors are `Status`/`Result<T>`, and contract
    violations go through `COMMON_ASSERT`. Library targets build with `-fno-exceptions -fno-rtti`.
 5. **Explicit scheduling.** `RtThread` creates threads with `PTHREAD_EXPLICIT_SCHED`, so the policy,

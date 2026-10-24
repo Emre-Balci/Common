@@ -163,7 +163,7 @@ public:
     }
 
     explicit LogArgument(const float value) noexcept {
-        store(Kind::kDouble, double{value});
+        store(Kind::kDouble, static_cast<double>(value));  // Exact: every float is a double.
     }
 
     explicit LogArgument(const double value) noexcept {
@@ -184,11 +184,16 @@ public:
         if (text == nullptr) {
             store_text(kNullText.data(), kNullText.size());
         } else {
+            // Copying while scanning reads each character of the caller's text once, and none after
+            // the terminator. (A separate copy after the scan makes GCC's -Warray-bounds report a
+            // false positive for short char arrays.)
+            std::array<char, kMaxTextLength + 1U> scanned{};
             std::size_t length{0U};
             while ((length <= kMaxTextLength) && (text[length] != '\0')) {
+                scanned[length] = text[length];
                 ++length;
             }
-            store_text(text, length);
+            store_text(scanned.data(), length);
         }
     }
 
