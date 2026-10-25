@@ -9,28 +9,44 @@
             "binaryDir": "${sourceDir}/build/${presetName}"
         },
         {
-            "name": "gcc-debug",
+            "name": "linux",
+            "hidden": true,
             "inherits": "base",
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+        },
+        {
+            "name": "msvc",
+            "hidden": true,
+            "inherits": "base",
+            "description": "MSVC (cl.exe) for x64; run from a Developer Command Prompt or PowerShell for VS 2022",
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+            "architecture": { "value": "x64", "strategy": "external" },
+            "toolset": { "value": "host=x64", "strategy": "external" },
+            "cacheVariables": { "CMAKE_CXX_COMPILER": "cl" }
+        },
+        {
+            "name": "gcc-debug",
+            "inherits": "linux",
             "cacheVariables": { "CMAKE_CXX_COMPILER": "g++", "CMAKE_BUILD_TYPE": "Debug" }
         },
         {
             "name": "gcc-release",
-            "inherits": "base",
+            "inherits": "linux",
             "cacheVariables": { "CMAKE_CXX_COMPILER": "g++", "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
         },
         {
             "name": "clang-debug",
-            "inherits": "base",
+            "inherits": "linux",
             "cacheVariables": { "CMAKE_CXX_COMPILER": "clang++", "CMAKE_BUILD_TYPE": "Debug" }
         },
         {
             "name": "clang-release",
-            "inherits": "base",
+            "inherits": "linux",
             "cacheVariables": { "CMAKE_CXX_COMPILER": "clang++", "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
         },
         {
             "name": "asan",
-            "inherits": "base",
+            "inherits": "linux",
             "cacheVariables": {
                 "CMAKE_CXX_COMPILER": "clang++",
                 "CMAKE_BUILD_TYPE": "Debug",
@@ -39,7 +55,7 @@
         },
         {
             "name": "tsan",
-            "inherits": "base",
+            "inherits": "linux",
             "cacheVariables": {
                 "CMAKE_CXX_COMPILER": "clang++",
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
@@ -48,30 +64,73 @@
         },
         {
             "name": "tidy",
-            "inherits": "base",
+            "inherits": "linux",
             "cacheVariables": {
                 "CMAKE_CXX_COMPILER": "clang++",
                 "CMAKE_BUILD_TYPE": "Debug",
                 "COMMON_ENABLE_CLANG_TIDY": "ON"
             }
+        },
+        {
+            "name": "msvc-debug",
+            "inherits": "msvc",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
+            "name": "msvc-release",
+            "inherits": "msvc",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+        },
+        {
+            "name": "msvc-asan",
+            "inherits": "msvc",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "COMMON_SANITIZER": "address" }
         }
     ],
     "buildPresets": [
-        { "name": "gcc-debug", "configurePreset": "gcc-debug" },
-        { "name": "gcc-release", "configurePreset": "gcc-release" },
-        { "name": "clang-debug", "configurePreset": "clang-debug" },
-        { "name": "clang-release", "configurePreset": "clang-release" },
-        { "name": "asan", "configurePreset": "asan" },
-        { "name": "tsan", "configurePreset": "tsan" },
-        { "name": "tidy", "configurePreset": "tidy" }
+        {
+            "name": "linux",
+            "hidden": true,
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+        },
+        {
+            "name": "windows",
+            "hidden": true,
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+        },
+        { "name": "gcc-debug", "inherits": "linux", "configurePreset": "gcc-debug" },
+        { "name": "gcc-release", "inherits": "linux", "configurePreset": "gcc-release" },
+        { "name": "clang-debug", "inherits": "linux", "configurePreset": "clang-debug" },
+        { "name": "clang-release", "inherits": "linux", "configurePreset": "clang-release" },
+        { "name": "asan", "inherits": "linux", "configurePreset": "asan" },
+        { "name": "tsan", "inherits": "linux", "configurePreset": "tsan" },
+        { "name": "tidy", "inherits": "linux", "configurePreset": "tidy" },
+        { "name": "msvc-debug", "inherits": "windows", "configurePreset": "msvc-debug" },
+        { "name": "msvc-release", "inherits": "windows", "configurePreset": "msvc-release" },
+        { "name": "msvc-asan", "inherits": "windows", "configurePreset": "msvc-asan" }
     ],
     "testPresets": [
         { "name": "base", "hidden": true, "output": { "outputOnFailure": true } },
-        { "name": "gcc-debug", "inherits": "base", "configurePreset": "gcc-debug" },
-        { "name": "gcc-release", "inherits": "base", "configurePreset": "gcc-release" },
-        { "name": "clang-debug", "inherits": "base", "configurePreset": "clang-debug" },
-        { "name": "clang-release", "inherits": "base", "configurePreset": "clang-release" },
-        { "name": "asan", "inherits": "base", "configurePreset": "asan" },
-        { "name": "tsan", "inherits": "base", "configurePreset": "tsan" }
+        {
+            "name": "linux",
+            "hidden": true,
+            "inherits": "base",
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+        },
+        {
+            "name": "windows",
+            "hidden": true,
+            "inherits": "base",
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+        },
+        { "name": "gcc-debug", "inherits": "linux", "configurePreset": "gcc-debug" },
+        { "name": "gcc-release", "inherits": "linux", "configurePreset": "gcc-release" },
+        { "name": "clang-debug", "inherits": "linux", "configurePreset": "clang-debug" },
+        { "name": "clang-release", "inherits": "linux", "configurePreset": "clang-release" },
+        { "name": "asan", "inherits": "linux", "configurePreset": "asan" },
+        { "name": "tsan", "inherits": "linux", "configurePreset": "tsan" },
+        { "name": "msvc-debug", "inherits": "windows", "configurePreset": "msvc-debug" },
+        { "name": "msvc-release", "inherits": "windows", "configurePreset": "msvc-release" },
+        { "name": "msvc-asan", "inherits": "windows", "configurePreset": "msvc-asan" }
     ]
 }

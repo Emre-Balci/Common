@@ -4,6 +4,9 @@ A C++17 foundation library for real-time applications on Linux, such as automoti
 loops and trading systems. It provides the pieces a real-time program needs. On the
 real-time path, none of them allocate, block or throw, and every loop has a fixed upper bound.
 
+It also builds and runs on Windows with MSVC, for tools, simulators and development, where the
+same code compiles on both platforms; see [Windows](#windows) for what differs there.
+
 ## Components
 
 Headers are grouped by purpose in `include/common/<group>/`, and `#include "common/common.hpp"`
@@ -14,7 +17,7 @@ The last column says whether a component may be used on the real-time path.
 
 | Header | Purpose | RT-path safe |
 |---|---|---|
-| `core/config.hpp` | Platform checks (Linux, C++17, no `-ffast-math`), cache-line and page size | yes |
+| `core/config.hpp` | Platform checks (Linux or Windows, C++17, no `-ffast-math` or `/fp:fast`), cache-line and page size, `NativeHandle` (a descriptor, or a Windows `HANDLE`) | yes |
 | `core/status.hpp` | `Status` (`[[nodiscard]]` enum) and `Result<T>`, used instead of exceptions | yes |
 | `core/assert.hpp` | `COMMON_ASSERT`: never throws; calls a handler that must not allocate, then aborts | yes |
 
@@ -160,6 +163,26 @@ ctest --preset gcc-debug
 Always run the `tsan` and `asan` presets after changing anything concurrent. The `tidy` preset
 needs `sudo apt install clang-tidy`.
 
+## Building (Windows)
+
+Requires Visual Studio 2022 (MSVC 19.30 or later) with the "Desktop development with C++"
+workload, which includes CMake and Ninja, on Windows 10 1803 or later (x64). In a Developer
+PowerShell or Developer Command Prompt for VS 2022 (the other presets are `msvc-release` and
+`msvc-asan`):
+
+```bat
+cmake --preset msvc-debug
+cmake --build --preset msvc-debug
+ctest --preset msvc-debug
+build\msvc-debug\examples\rt_periodic_loop.exe 1 2000
+```
+
+Visual Studio and VS Code (CMake Tools) open the folder and offer the same presets; each host only
+lists its own. The MSVC build uses `/W4` with extra warnings close to the GCC/Clang set, `/WX`,
+`/permissive-`, `/fp:precise` (no contraction into FMA), and turns off exceptions and RTTI.
+Run `msvc-release` too before finishing a change: MSVC's optimizer has produced wrong code that
+the debug build did not show (see the comment in `protocol/rate_limiter.hpp`).
+
 ## Using it in a project
 
 ```cmake
@@ -177,6 +200,36 @@ target_link_libraries(my_app PRIVATE common::common common::options)
 `common::options` applies the same warnings, `-Werror` (when building this project at top level),
 `-ffp-contract=off` and `-fno-exceptions -fno-rtti` to your target. Leave it out if you need
 different flags. Tests and examples are only built when this project is the top-level project.
+
+With MSVC, `common::options` adds `/EHs-c- /GR-` and `_HAS_EXCEPTIONS=0`. CMake's default flags
+contain `/EHsc /GR`, so cl warns (D9025) that it overrides them; remove them from
+`CMAKE_CXX_FLAGS` in your project to silence that, as this project does for its own targets.
+
+## Windows
+
+Every component builds on Windows, and the tests pass there. What is Linux-only either has a
+Windows equivalent or reports `Status::kNotSupported`:
+
+| Component | On Windows |
+|---|---|
+| `MonotonicClock` | `QueryPerformanceCounter` (through `std::chrono::steady_clock`); `to_timespec()` is Linux-only |
+| `sleep_until`, `PeriodicTimer` | A high-resolution waitable timer per thread, created by the thread's first sleep; never wakes early |
+| `RtThread` and the current-thread functions | `kOther` only: Windows has no `SCHED_FIFO`/`SCHED_RR`, so those report `kNotSupported`. Affinity is limited to one processor group, and names are thread descriptions |
+| `lock_process_memory`, `configure_allocator_for_rt` | `kNotSupported` (no `mlockall` or glibc malloc) |
+| `enable_flush_denormals`, `enable_fp_traps` | MXCSR, and `_controlfp_s` (traps raise structured exceptions) |
+| `File`, file-system functions | UTF-8 paths through the wide-character API; files shared like POSIX files; `rename_file` replaces open files where NTFS offers POSIX semantics; permission bits are checked but have no effect |
+| `MappedFile` | `CreateFileMapping`/`MapViewOfFile`, `VirtualLock`; see `file/mapped_file.hpp` for the differences |
+| `SerialPort` | COM ports (`"COM3"`), overlapped I/O cancelled at the `Deadline`; always exclusive; bytes with parity errors are passed on |
+| `write_log_line_to_fd` | Takes a `HANDLE` (`NativeHandle`), e.g. `GetStdHandle(STD_ERROR_HANDLE)` |
+
+**Windows is not a real-time operating system.** Without real-time policies, locked memory or
+isolated cores, wake-up latency is in the range of milliseconds and unbounded. Use it for tools,
+simulators and tests; deploy real-time code on Linux.
+
+The serial tests cannot open a COM port without hardware, so on Windows they drive the overlapped
+I/O through named pipes. To test a real port, set `COMMON_TEST_SERIAL_PORT` (e.g. `COM4`, or
+`/dev/ttyUSB0` on Linux): `serial_port_device_from_environment` then opens it, changes its speed and
+waits for input, without sending anything.
 
 ## Real-time privileges
 
@@ -218,9 +271,10 @@ Documented deviations (each is also marked in the code):
 |---|---|---|
 | 19.0.2 function-like macros | `COMMON_ASSERT` | Needs call-site file/line and the expression text |
 | 15.1.3 implicit converting constructors | `Span` | Like `std::span`: a container or `Span<T>` can be passed where a span (of const) is expected; it only creates a view |
-| 30.0.1 `<cstdio>` | `rename_file` | `rename()` is declared in `<cstdio>`, but it is the POSIX call that replaces a file atomically; no stream I/O is used |
+| 30.0.1 `<cstdio>` | `rename_file` (Linux) | `rename()` is declared in `<cstdio>`, but it is the POSIX call that replaces a file atomically; no stream I/O is used |
 | 21.6.3 advanced memory management | `StaticVector`, `ObjectPool` | Placement new into owned, aligned inline storage; this is what removes heap use |
-| 8.2.5 `reinterpret_cast` | `StaticVector`, `ObjectPool` | Access to objects created in raw storage (with `std::launder`) and an address range check |
+| 8.2.5 `reinterpret_cast` | `StaticVector`, `ObjectPool`, `RtThread` (Windows) | Access to objects created in raw storage (with `std::launder`) and an address range check; `_beginthreadex()` returns the thread's `HANDLE` as an integer |
+| 21.2.4 `offsetof` | `rename_file` (Windows) | `FILE_RENAME_INFO` ends in a variable-length name, which starts at `offsetof(FILE_RENAME_INFO, FileName)` |
 | 10.4.1 `asm` | `cpu_relax`, FPCR access (AArch64 only) | No intrinsic exists |
 
 Tests and examples use `<cstdio>` and `std::thread` and are outside the compliance scope.

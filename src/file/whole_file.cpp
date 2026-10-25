@@ -1,6 +1,10 @@
 #include "common/file/whole_file.hpp"
 
+#if defined(_WIN32)
+#include <process.h>  // _getpid
+#else
 #include <unistd.h>
+#endif
 
 #include <array>
 #include <atomic>
@@ -68,6 +72,26 @@ Result<std::size_t> read_to_end(File& file, const Span<std::uint8_t> buffer) noe
     return is_ok(status) ? Result<std::size_t>::success(total) : Result<std::size_t>::failure(status);
 }
 
+/// @return true if @p character separates the components of a path: '/', and on Windows also '\\'.
+[[nodiscard]] bool is_separator(const char character) noexcept {
+#if defined(_WIN32)
+    return (character == '/') || (character == '\\');
+#else
+    return character == '/';
+#endif
+}
+
+/// @return true if @p path starts with a drive letter and a colon, as in "C:\\data" or "C:data"
+///         (Windows only).
+[[nodiscard]] bool has_drive(const Span<const char> path) noexcept {
+#if defined(_WIN32)
+    return (path.size() >= 2U) && (path[1U] == ':');
+#else
+    static_cast<void>(path);
+    return false;
+#endif
+}
+
 /// Appends the decimal digits of @p value to @p out at @p position.
 /// @pre out has room for 10 more characters after position
 void append_decimal(const Span<char> out, std::size_t& position, const std::uint32_t value) noexcept {
@@ -94,7 +118,7 @@ void append_text(const Span<char> out, std::size_t& position, const Span<const c
 }
 
 /// @return the length of @p path, if it is a valid argument of write_file_atomically(): not
-///         nullptr, not empty, at most kMaxAtomicPathLength bytes, and not ending with '/'.
+///         nullptr, not empty, at most kMaxAtomicPathLength bytes, and not ending with a separator.
 ///         kInvalidArgument otherwise. Reads at most kMaxAtomicPathLength + 1 characters.
 Result<std::size_t> atomic_path_length(const char* const path) noexcept {
     Result<std::size_t> result{Result<std::size_t>::failure(Status::kInvalidArgument)};
@@ -103,7 +127,7 @@ Result<std::size_t> atomic_path_length(const char* const path) noexcept {
         while ((length <= kMaxAtomicPathLength) && (path[length] != '\0')) {
             ++length;
         }
-        if ((length > 0U) && (length <= kMaxAtomicPathLength) && (path[length - 1U] != '/')) {
+        if ((length > 0U) && (length <= kMaxAtomicPathLength) && (!is_separator(path[length - 1U]))) {
             result = Result<std::size_t>::success(length);
         }
     }
@@ -116,8 +140,12 @@ void temporary_name(const Span<const char> path, const std::uint32_t counter,
     std::size_t position{0U};
     append_text(out, position, path);
     append_text(out, position, Span<const char>{".tmp.", 5U});
-    // getpid() cannot fail and returns a positive pid_t.
+    // getpid() cannot fail and returns a positive pid_t; so does _getpid() on Windows.
+#if defined(_WIN32)
+    append_decimal(out, position, static_cast<std::uint32_t>(::_getpid()));
+#else
     append_decimal(out, position, static_cast<std::uint32_t>(::getpid()));
+#endif
     out[position] = '.';
     ++position;
     append_decimal(out, position, counter);
@@ -125,22 +153,24 @@ void temporary_name(const Span<const char> path, const std::uint32_t counter,
 }
 
 /// Writes the directory part of @p path and a NUL into @p out: "." for a bare file name, "/" for a
-/// file in the root directory.
+/// file in the root directory. On Windows, a root directory keeps its drive ("C:\\" for "C:\\file"),
+/// and the directory of "C:file" is "C:", the current directory of drive C.
 void parent_directory(const Span<const char> path, const Span<char> out) noexcept {
-    std::size_t slash{path.size()};  // path.size(): no '/'.
+    std::size_t slash{path.size()};  // path.size(): no separator.
     for (std::size_t index{path.size()}; index > 0U; --index) {
-        if (path[index - 1U] == '/') {
+        if (is_separator(path[index - 1U])) {
             slash = index - 1U;
             break;
         }
     }
     std::size_t position{0U};
-    if (slash == path.size()) {
+    if ((slash == path.size()) && has_drive(path)) {
+        append_text(out, position, path.first(2U));
+    } else if (slash == path.size()) {
         out[position] = '.';
         ++position;
-    } else if (slash == 0U) {
-        out[position] = '/';
-        ++position;
+    } else if ((slash == 0U) || ((slash == 2U) && has_drive(path))) {
+        append_text(out, position, path.first(slash + 1U));  // The root directory, with its separator.
     } else {
         append_text(out, position, path.first(slash));
     }

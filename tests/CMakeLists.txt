@@ -34,8 +34,15 @@ add_executable(common_tests
     time/test_deadline.cpp
     time/test_timer_wheel.cpp)
 
-# test_framework.hpp lives here; tests in group subdirectories include it by name.
-target_include_directories(common_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# test_framework.hpp lives here; tests in group subdirectories include it by name. The library's
+# internal headers (src/detail) are reachable too, for tests of platform helpers.
+target_include_directories(common_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(common_tests PRIVATE common::common common::options)
 
 add_test(NAME common_tests COMMAND common_tests)
+
+if(WIN32 AND BUILD_SHARED_LIBS)
+    # Windows finds a DLL next to the executable (there is no rpath).
+    add_custom_command(TARGET common_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:common> $<TARGET_FILE_DIR:common_tests>)
+endif()

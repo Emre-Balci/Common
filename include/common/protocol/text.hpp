@@ -163,7 +163,7 @@ inline constexpr std::uint32_t kBitsPerHexDigit{4U};
 template <typename T>
 [[nodiscard]] constexpr Result<T> parse_unsigned(const Span<const char> text) noexcept {
     static_assert(detail::text::kIsUnsignedInteger<T>, "T must be an unsigned integer type");
-    constexpr T kMax{std::numeric_limits<T>::max()};
+    constexpr T kTypeMax{std::numeric_limits<T>::max()};
     constexpr T kBase{10U};
     Status status{text.empty() ? Status::kInvalidArgument : Status::kOk};
     T value{0U};
@@ -174,7 +174,7 @@ template <typename T>
             status = Status::kInvalidArgument;
         } else {
             const T digit{static_cast<T>(position)};
-            if (value > static_cast<T>((kMax - digit) / kBase)) {
+            if (value > static_cast<T>((kTypeMax - digit) / kBase)) {
                 status = Status::kOverflow;
             } else {
                 value = static_cast<T>((value * kBase) + digit);

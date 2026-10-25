@@ -57,14 +57,14 @@ template <typename T>
 constexpr bool mul_overflows(const T a, const T b) noexcept {
     bool overflow{false};
     if constexpr (std::is_signed<T>::value) {
-        constexpr T kMax{std::numeric_limits<T>::max()};
-        constexpr T kMin{std::numeric_limits<T>::min()};
+        constexpr T kTypeMax{std::numeric_limits<T>::max()};
+        constexpr T kTypeMin{std::numeric_limits<T>::min()};
         if (a > T{0}) {
-            overflow = (b > T{0}) ? (a > (kMax / b)) : (b < (kMin / a));
+            overflow = (b > T{0}) ? (a > (kTypeMax / b)) : (b < (kTypeMin / a));
         } else if (b > T{0}) {
-            overflow = a < (kMin / b);
+            overflow = a < (kTypeMin / b);
         } else {
-            overflow = (a != T{0}) && (b < (kMax / a));
+            overflow = (a != T{0}) && (b < (kTypeMax / a));
         }
     } else {
         overflow = (b != T{0}) && (a > (std::numeric_limits<T>::max() / b));

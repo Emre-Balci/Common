@@ -1,5 +1,3 @@
-#include <unistd.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +12,7 @@
 #include "common/file/whole_file.hpp"
 #include "temp_directory.hpp"
 #include "test_framework.hpp"
+#include "test_platform.hpp"
 
 namespace {
 
@@ -105,22 +104,23 @@ TEST_CASE(line_reader_many_lines_across_refills) {
 }
 
 TEST_CASE(line_reader_from_a_pipe_in_pieces) {
-    std::array<int, 2U> pipe_ends{{-1, -1}};
-    REQUIRE(::pipe(pipe_ends.data()) == 0);
+    common::NativeHandle read_end{common::kInvalidNativeHandle};
+    common::NativeHandle write_end{common::kInvalidNativeHandle};
+    REQUIRE(test::create_pipe(read_end, write_end));
     common::File input{};
-    REQUIRE(common::is_ok(input.adopt(pipe_ends[0U])));
+    REQUIRE(common::is_ok(input.adopt(read_end)));
 
     // The writer sends the text a few bytes at a time, splitting lines and "\r\n" pairs.
     const std::string text{"first line\r\nsecond\nthird line is longer\r\n\nlast"};
-    std::thread writer{[&text, write_end = pipe_ends[1U]]() {
+    std::thread writer{[&text, write_end]() {
         for (std::size_t offset{0U}; offset < text.size(); offset += 3U) {
             const std::size_t count{((text.size() - offset) < 3U) ? (text.size() - offset) : 3U};
-            if (::write(write_end, text.data() + offset, count) != static_cast<ssize_t>(count)) {
+            if (!test::write_native(write_end, text.data() + offset, count)) {
                 break;  // The test then sees the text cut short.
             }
             std::this_thread::yield();
         }
-        static_cast<void>(::close(write_end));
+        static_cast<void>(test::close_native(write_end));
     }};
 
     common::LineReader<32U> reader{input};

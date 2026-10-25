@@ -1,23 +1,32 @@
 #include "common/system/memory.hpp"
 
+#if !defined(_WIN32)
 #include <sys/mman.h>
 
 #include <cerrno>
+#endif
 
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
 
+#if !defined(_WIN32)
 #include "detail/posix_status.hpp"
+#endif
 
 namespace common {
 
 Status lock_process_memory() noexcept {
+#if defined(_WIN32)
+    // Windows can only lock given address ranges (VirtualLock), up to the working-set minimum.
+    return Status::kNotSupported;
+#else
     Status status{Status::kOk};
     if (::mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
         status = detail::status_from_errno(errno);
     }
     return status;
+#endif
 }
 
 Status configure_allocator_for_rt() noexcept {

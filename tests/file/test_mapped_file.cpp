@@ -1,6 +1,3 @@
-#include <sys/stat.h>
-#include <unistd.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -207,9 +204,7 @@ TEST_CASE(mapped_file_create_state_block) {
     CHECK(block.size() == 16U);
     CHECK(text_of(block.bytes().first(9U)) == "persisted");
     CHECK(common::is_ok(block.unmap()));
-    struct stat info {};
-    REQUIRE(::stat(path.c_str(), &info) == 0);
-    CHECK(info.st_size == 16);
+    CHECK(common::file_size(path.c_str()).value_or(0U) == 16U);
 
     REQUIRE(common::is_ok(block.create(path.c_str(), 0U, 0x1A4U)));  // An empty block.
     CHECK(block.is_mapped());

@@ -20,7 +20,7 @@
 ///   g_control_log.warning("cycle {} overran by {} ns", cycle, overrun_ns);
 ///
 ///   // Logging thread (not real-time): drains every logger in turn.
-///   int fd{STDERR_FILENO};
+///   common::NativeHandle fd{STDERR_FILENO};  // On Windows: ::GetStdHandle(STD_ERROR_HANDLE).
 ///   while (running) {
 ///       std::size_t lines{g_control_log.drain(&common::write_log_line_to_fd, &fd, 64U)};
 ///       lines += g_gateway_log.drain(&common::write_log_line_to_fd, &fd, 64U);
@@ -351,14 +351,15 @@ using LogSink = void (*)(const char* text, std::size_t length, void* context) no
 ///         including the '\n'.
 [[nodiscard]] std::size_t format_log_record(const LogRecord& record, Span<char> out) noexcept;
 
-/// A ready-made LogSink: writes the line to a file descriptor with ::write(), continuing after
-/// partial writes and restarting after EINTR (a bounded number of times).
+/// A ready-made LogSink: writes the line to a file descriptor with ::write() (WriteFile() on
+/// Windows), continuing after partial writes and restarting after EINTR (a bounded number of times).
 ///
-/// @p context must point to an int holding the descriptor, e.g. STDERR_FILENO or an open log file.
-/// The rest of a line is dropped when the write fails, including EAGAIN on a non-blocking
-/// descriptor, because a sink cannot report errors. Writing to a pipe or socket whose reader has
-/// gone raises SIGPIPE unless the process ignores that signal. Blocking I/O: never call it on a
-/// real-time thread.
+/// @p context must point to a NativeHandle holding the descriptor: on Linux an int such as
+/// STDERR_FILENO or the descriptor of an open log file, on Windows a HANDLE such as
+/// GetStdHandle(STD_ERROR_HANDLE) or File::descriptor(). The rest of a line is dropped when the
+/// write fails, including EAGAIN on a non-blocking descriptor, because a sink cannot report errors.
+/// On Linux, writing to a pipe or socket whose reader has gone raises SIGPIPE unless the process
+/// ignores that signal. Blocking I/O: never call it on a real-time thread.
 /// @pre context != nullptr, and text != nullptr unless length == 0.
 void write_log_line_to_fd(const char* text, std::size_t length, void* context) noexcept;
 

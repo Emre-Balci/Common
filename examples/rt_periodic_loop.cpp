@@ -9,7 +9,8 @@
 ///      It also supervises the RT loop through a heartbeat and a watchdog.
 ///
 /// Usage: rt_periodic_loop [cpu] [cycles]
-/// For SCHED_FIFO run as root, with CAP_SYS_NICE, or with an rtprio limit (see README).
+/// For SCHED_FIFO run as root, with CAP_SYS_NICE, or with an rtprio limit (see README). Windows has
+/// no real-time policies: there the loop runs with the normal thread priority.
 
 #include <atomic>
 #include <chrono>
@@ -108,8 +109,10 @@ int main(const int argc, const char* const argv[]) {
 
     common::RtThread rt_thread{};
     status = rt_thread.start(config, &rt_loop, &g_context);
-    if (status == common::Status::kPermissionDenied) {
-        std::printf("SCHED_FIFO denied, falling back to SCHED_OTHER (latency will not be bounded)\n");
+    // kNotSupported: Windows has no real-time scheduling policies.
+    if ((status == common::Status::kPermissionDenied) || (status == common::Status::kNotSupported)) {
+        std::printf("SCHED_FIFO %s, falling back to SCHED_OTHER (latency will not be bounded)\n",
+                    (status == common::Status::kNotSupported) ? "not supported" : "denied");
         config.policy = common::SchedPolicy::kOther;
         config.priority = 0;
         status = rt_thread.start(config, &rt_loop, &g_context);

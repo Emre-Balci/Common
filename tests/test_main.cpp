@@ -2,6 +2,12 @@
 #include <cstdlib>
 #include <cstring>
 
+#if defined(_WIN32)
+#include <crtdbg.h>
+
+#include "test_platform.hpp"
+#endif
+
 #include "test_framework.hpp"
 
 namespace test {
@@ -36,6 +42,16 @@ std::uint32_t failure_count() noexcept {
 
 /// Usage: common_tests [substring]   runs the tests whose name contains substring.
 int main(const int argc, const char* const argv[]) {
+#if defined(_WIN32)
+    // A failure must end the run, not wait for someone to close a dialog: the debug C runtime reports
+    // its assertions and errors on stderr, and abort() and crashes end the process at once.
+    static_cast<void>(_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE));
+    static_cast<void>(_CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR));
+    static_cast<void>(_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE));
+    static_cast<void>(_CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR));
+    static_cast<void>(_set_abort_behavior(0U, _WRITE_ABORT_MSG | _CALL_REPORTFAULT));
+    static_cast<void>(::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX));
+#endif
     const char* const filter{(argc > 1) ? argv[1] : nullptr};
     const test::Registry& registry{test::Registry::instance()};
     std::uint32_t run{0U};

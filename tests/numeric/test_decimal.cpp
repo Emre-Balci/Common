@@ -98,8 +98,8 @@ TEST_CASE(decimal_format) {
     CHECK(formatted(Whole::from_units(7)) == "7");
     CHECK(formatted(Whole::from_units(kMin)) == "-9223372036854775808");
     CHECK(formatted(common::Decimal<18U>::from_units(1)) == "0.000000000000000001");
-    CHECK(Price::kMaxFormattedSize == 21U);
-    CHECK(Whole::kMaxFormattedSize == 20U);
+    static_assert(Price::kMaxFormattedSize == 21U, "sign, 15 digits, point and 4 decimals");
+    static_assert(Whole::kMaxFormattedSize == 20U, "sign and 19 digits");
 
     // Too small a buffer: nothing is written.
     std::array<char, 7U> small{};

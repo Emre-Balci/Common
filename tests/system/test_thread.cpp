@@ -4,14 +4,34 @@
 #include <cstring>
 #include <thread>
 
+#if !defined(_WIN32)
 #include <pthread.h>
+#endif
 
 #include "common/core/status.hpp"
 #include "common/system/memory.hpp"
 #include "common/system/thread.hpp"
 #include "test_framework.hpp"
+#if defined(_WIN32)
+#include "test_platform.hpp"
+#endif
 
 namespace {
+
+/// The calling thread's name (on Windows, its description), as set by RtThread or
+/// set_current_thread_name().
+void read_thread_name(std::array<char, 16U>& name) {
+#if defined(_WIN32)
+    PWSTR description{nullptr};
+    if (SUCCEEDED(::GetThreadDescription(::GetCurrentThread(), &description))) {
+        static_cast<void>(::WideCharToMultiByte(CP_UTF8, 0U, description, -1, name.data(), static_cast<int>(name.size()),
+                                                nullptr, nullptr));
+        static_cast<void>(::LocalFree(description));
+    }
+#else
+    static_cast<void>(::pthread_getname_np(::pthread_self(), name.data(), name.size()));
+#endif
+}
 
 struct ThreadProbe final {
     std::atomic<bool> ran{false};
@@ -26,7 +46,7 @@ void probe_entry(void* const context) noexcept {
     common::prefault_stack<16U * 1024U>();
     probe->cpu.store(common::current_cpu());
     static_cast<void>(common::get_current_thread_scheduling(probe->policy, probe->priority));
-    static_cast<void>(::pthread_getname_np(::pthread_self(), probe->name.data(), probe->name.size()));
+    read_thread_name(probe->name);
     probe->ran.store(true);
 }
 
@@ -77,8 +97,12 @@ TEST_CASE(rt_thread_fifo_applied_or_denied) {
 
     common::RtThread thread{};
     const common::Status status{thread.start(config, &probe_entry, &probe)};
+#if defined(_WIN32)
+    CHECK(status == common::Status::kNotSupported);  // Windows has no real-time policies.
+#else
     // Unprivileged environments (CI, WSL without rtprio limits) must report, not silently ignore.
     CHECK((status == common::Status::kOk) || (status == common::Status::kPermissionDenied));
+#endif
     if (common::is_ok(status)) {
         CHECK(common::is_ok(thread.join()));
         CHECK(probe.policy == common::SchedPolicy::kFifo);
@@ -108,7 +132,19 @@ TEST_CASE(current_thread_configuration) {
         CHECK(common::is_ok(common::set_current_thread_affinity(common::CpuSet::single(0U))));
         CHECK(common::current_cpu() == 0);
         CHECK(common::set_current_thread_affinity(common::CpuSet{}) == common::Status::kInvalidArgument);
+        // No CPU of the set exists.
+        CHECK(common::set_current_thread_affinity(common::CpuSet::single(common::CpuSet::kMaxCpus - 1U)) ==
+              common::Status::kInvalidArgument);
         CHECK(common::is_ok(common::set_current_thread_scheduling(common::SchedPolicy::kOther, 0)));
+        common::SchedPolicy policy{common::SchedPolicy::kFifo};
+        std::int32_t priority{-1};
+        CHECK(common::is_ok(common::get_current_thread_scheduling(policy, priority)));
+        CHECK(policy == common::SchedPolicy::kOther);
+        CHECK(priority == 0);
+#if defined(_WIN32)
+        CHECK(common::set_current_thread_scheduling(common::SchedPolicy::kRoundRobin, 10) ==
+              common::Status::kNotSupported);
+#endif
     }};
     worker.join();
 }

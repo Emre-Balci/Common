@@ -44,6 +44,19 @@
 ///   blocks up front to prevent that.
 /// - A mapping does not need the descriptor it was made from: it stays valid after the File is
 ///   closed, and after the file is renamed or removed.
+///
+/// On Windows, the same holds with these differences:
+/// - A mapping starts at a multiple of the allocation granularity (64 KiB) rather than of the page
+///   size; bytes() still starts exactly at MapOptions::offset.
+/// - Population (MapOptions::populate, and locking) prefetches the pages and touches every one of
+///   them; a kCopyOnWrite mapping gets every page written with its own value, which gives it the
+///   private copy right away, as on Linux.
+/// - lock() is VirtualLock(), which the process's minimum working-set size limits (kResourceLimit
+///   beyond it; SetProcessWorkingSetSize() raises it). advise() acts on Advice::kWillNeed only.
+/// - A file cannot be truncated while it is mapped: the truncation fails, rather than accesses to the
+///   pages beyond the end raising SIGBUS. An I/O error while a page is read in raises the structured
+///   exception EXCEPTION_IN_PAGE_ERROR instead of SIGBUS.
+/// - A kReadWrite mapping keeps a handle to its file (shared like any File) for sync().
 
 #ifndef COMMON_FILE_MAPPED_FILE_HPP
 #define COMMON_FILE_MAPPED_FILE_HPP
@@ -190,11 +203,12 @@ public:
     /// file, and for an empty mapping. Blocks: never call it on a real-time thread.
     Status sync() noexcept;
 
-    /// Locks the pages of the mapping in RAM (mlock(2)), reading them in first if needed. A locked
-    /// kReadWrite mapping on a disk-based file system still takes write faults (see the file
-    /// comment).
-    /// @return kResourceLimit if RLIMIT_MEMLOCK does not allow it, kPermissionDenied if the limit
-    ///         is 0 and the process lacks CAP_IPC_LOCK; kOk for an empty mapping.
+    /// Locks the pages of the mapping in RAM (mlock(2); VirtualLock() on Windows), reading them in
+    /// first if needed. A locked kReadWrite mapping on a disk-based file system still takes write
+    /// faults (see the file comment).
+    /// @return kResourceLimit if RLIMIT_MEMLOCK (on Windows, the minimum working-set size) does not
+    ///         allow it, kPermissionDenied if the limit is 0 and the process lacks CAP_IPC_LOCK; kOk
+    ///         for an empty mapping.
     Status lock() noexcept;
 
     /// Unlocks the pages of the mapping (munlock(2)); the kernel may evict them again.
@@ -213,6 +227,9 @@ private:
     Span<std::uint8_t> view_{};      ///< The requested range inside the kernel mapping.
     MapMode mode_{MapMode::kReadOnly};
     bool mapped_{false};
+#if defined(_WIN32)
+    void* file_{nullptr};  ///< A kReadWrite mapping's own handle to its file, for sync(); else nullptr.
+#endif
 };
 
 }  // namespace common

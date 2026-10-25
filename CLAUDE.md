@@ -1,7 +1,7 @@
 # common — notes for Claude
 
-A C++17 real-time foundation library for Linux. It is the base for automotive and trading
-projects. See README.md for the components and the rules.
+A C++17 real-time foundation library for Linux that also builds and runs on Windows (MSVC). It is
+the base for automotive and trading projects. See README.md for the components and the rules.
 
 ## Layout
 Headers are grouped by purpose in `include/common/<group>/`: `core`, `numeric`, `containers`,
@@ -9,6 +9,15 @@ Headers are grouped by purpose in `include/common/<group>/`: `core`, `numeric`, 
 `src/<group>/` (internal helpers in `src/detail/`), tests in `tests/<group>/`. A new component goes
 in the matching group and is added to `CMakeLists.txt`, `tests/CMakeLists.txt`,
 `include/common/common.hpp` and the README tables.
+
+## Platforms
+Platform code sits in `#if defined(_WIN32)` / `#else` blocks next to the POSIX code, so both stay
+in step. A component that is mostly platform-specific has `<name>.cpp` (shared parts),
+`<name>_posix.cpp` and `<name>_win32.cpp`, chosen in `CMakeLists.txt` (`thread`, `serial_port`).
+Windows helpers live in `src/detail/` (`win32.hpp`: `<windows.h>` and UTF-8 paths;
+`win32_status.hpp`: error mapping that matches `posix_status.hpp`; `overlapped_io`). Public headers
+never include `<windows.h>`; OS handles appear as `NativeHandle`. Keep the Linux behaviour
+unchanged when adding Windows code, and document every Windows difference in the header.
 
 ## Non-negotiable rules for library code (`include/`, `src/`)
 - No heap allocation on the RT path: no `new`, `std::vector`, `std::string`, `std::function`
@@ -38,3 +47,9 @@ cmake --preset gcc-debug && cmake --build --preset gcc-debug && ctest --preset g
 Before finishing a change, run `gcc-release`, `clang-release`, `asan` and `tsan` too. All of
 them must build warning-free (`-Werror`) and pass. The FIFO test case is only fully exercised
 when the tests run as root (`wsl -u root`).
+
+For Windows, run `msvc-debug`, `msvc-release` and `msvc-asan` (also warning-free, `/WX`). From WSL,
+put the commands in a `.bat` file that first calls `vcvars64.bat` of Visual Studio 2022 (find it
+with `vswhere.exe -latest -property installationPath`, under `VC\Auxiliary\Build`), then run it
+with `cmd.exe /c` from the repository on a `/mnt/<drive>` path. `msvc-release` matters: MSVC 19.40
+has miscompiled code at `/O2` that passed in Debug.
