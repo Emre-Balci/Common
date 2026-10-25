@@ -23,7 +23,7 @@
 namespace common {
 
 /// Standard line speeds supported by the Linux termios interface. The enumerator value is the
-/// speed in bit/s.
+/// speed in bit/s; on Windows it is passed to the driver as it is.
 enum class BaudRate : std::uint32_t {
     k1200 = 1'200U,
     k2400 = 2'400U,
@@ -75,6 +75,7 @@ struct SerialOptions final {
     FlowControl flow_control{FlowControl::kNone};
     /// Refuse further opens of the device while this handle is open (TIOCEXCL), so a second
     /// program cannot interleave its bytes with ours. Processes with CAP_SYS_ADMIN bypass it.
+    /// Windows always opens a serial port for one handle only, whatever this says.
     bool exclusive{true};
 };
 
@@ -95,6 +96,11 @@ struct SerialOptions final {
 /// kNotSupported (the device rejects a setting), kTimeout, kDisconnected (the device was unplugged
 /// or hung up: close the port and open it again), kInterrupted, kSystemError.
 ///
+/// On Windows, the port is a COM port ("COM3"), opened for overlapped I/O so that reads and writes
+/// end at their deadline; the same raw settings apply through the DCB. DTR and RTS are raised, as
+/// Linux does on open. Unlike Linux, bytes with a parity error are passed on rather than dropped.
+/// Opening a port that another handle has open reports kResourceLimit.
+///
 /// Not thread-safe: one thread uses a port at a time.
 class SerialPort final {
 public:
@@ -108,7 +114,8 @@ public:
     SerialPort(const SerialPort&) = delete;
     SerialPort& operator=(const SerialPort&) = delete;
 
-    /// Opens the terminal device @p path (e.g. "/dev/ttyUSB0") and configures it in raw mode with
+    /// Opens the terminal device @p path (e.g. "/dev/ttyUSB0"; on Windows a COM port name such as
+    /// "COM3", or a device path such as "\\\\.\\COM12") and configures it in raw mode with
     /// @p options. Bytes received before the call are discarded.
     /// @return kInvalidArgument for nullptr, a port that is already open, or a path that is not a
     ///         terminal; kNotSupported if the device does not accept the settings; otherwise the
@@ -122,16 +129,17 @@ public:
     Status close() noexcept;
 
     [[nodiscard]] bool is_open() const noexcept {
-        return descriptor_ >= 0;
+        return descriptor_ != kInvalidNativeHandle;
     }
 
-    /// @return the descriptor, e.g. to wait for several ports with poll(2); -1 when closed.
-    [[nodiscard]] std::int32_t descriptor() const noexcept {
+    /// @return the descriptor, e.g. to wait for several ports with poll(2) (on Windows, the HANDLE,
+    ///         opened with FILE_FLAG_OVERLAPPED); kInvalidNativeHandle (-1 on Linux) when closed.
+    [[nodiscard]] NativeHandle descriptor() const noexcept {
         return descriptor_;
     }
 
-    /// Changes the line speed after all pending output has been sent (TCSADRAIN), e.g. after
-    /// telling the device to switch. Waiting for the output is the kernel's and is not bounded by a
+    /// Changes the line speed after all pending output has been sent (TCSADRAIN; on Windows after
+    /// drain()), e.g. after telling the device to switch. Waiting for the output is the kernel's and is not bounded by a
     /// deadline. @return kNotSupported if the device rejects the speed.
     Status set_baud_rate(BaudRate baud_rate) noexcept;
 
@@ -152,8 +160,9 @@ public:
     ///         been written); kDisconnected if the device went away.
     Status write_all(Span<const std::uint8_t> data, const Deadline& deadline) noexcept;
 
-    /// Waits until all written bytes have been sent on the line (tcdrain). The kernel's wait is
-    /// not bounded by a deadline: with hardware flow control a stalled peer can hold it.
+    /// Waits until all written bytes have been sent on the line (tcdrain; FlushFileBuffers on
+    /// Windows). The kernel's wait is not bounded by a deadline: with hardware flow control a
+    /// stalled peer can hold it.
     Status drain() noexcept;
 
     /// Discards received bytes that have not been read yet, e.g. stale output of the device before
@@ -164,8 +173,12 @@ public:
     Status discard_output() noexcept;
 
 private:
-    std::int32_t descriptor_{-1};
+    NativeHandle descriptor_{kInvalidNativeHandle};
+#if defined(_WIN32)
+    void* event_{nullptr};  ///< Manual-reset event for the overlapped reads and writes.
+#else
     bool exclusive_{false};  ///< This handle set TIOCEXCL and clears it again on close().
+#endif
 };
 
 }  // namespace common

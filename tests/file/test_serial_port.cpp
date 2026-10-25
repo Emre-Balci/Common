@@ -1,7 +1,9 @@
+#if !defined(_WIN32)
 #include <fcntl.h>
 #include <poll.h>
 #include <stdlib.h>
 #include <unistd.h>
+#endif
 
 #include <array>
 #include <chrono>
@@ -9,20 +11,31 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
 #include "common/containers/span.hpp"
+#include "common/core/config.hpp"
 #include "common/core/status.hpp"
 #include "common/file/serial_port.hpp"
 #include "common/time/clock.hpp"
 #include "common/time/deadline.hpp"
 #include "test_framework.hpp"
+#include "test_platform.hpp"
+#if defined(_WIN32)
+#include "detail/overlapped_io.hpp"
+#endif
 
 using namespace std::chrono_literals;
 
 namespace {
 
+common::Span<const std::uint8_t> bytes_of(const std::string& text) {
+    return common::Span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(text.data()), text.size()};
+}
+
+#if !defined(_WIN32)
 /// A pseudo-terminal pair: SerialPort opens the slave side, and the test plays the device on the
 /// master side.
 class PseudoTerminal final {
@@ -87,10 +100,6 @@ private:
     std::string slave_path_;
 };
 
-common::Span<const std::uint8_t> bytes_of(const std::string& text) {
-    return common::Span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(text.data()), text.size()};
-}
-
 /// Reads from @p port until @p count bytes arrived or the deadline passed.
 std::string read_text(common::SerialPort& port, const std::size_t count, const common::Deadline& deadline) {
     std::string text{};
@@ -110,16 +119,117 @@ bool wait_for_input(const common::SerialPort& port) {
     pollfd entry{port.descriptor(), POLLIN, 0};
     return ::poll(&entry, 1U, 1000) > 0;
 }
+#else
+/// A connected pair of named-pipe handles, both opened for overlapped I/O. Windows has no
+/// pseudo-terminal for COM ports, so the tests drive the overlapped reads and writes that SerialPort
+/// makes through a pipe: one end stands for the port, and the test plays the device on the other.
+class OverlappedPipe final {
+public:
+    static constexpr DWORD kBufferSize{4096U};
+
+    OverlappedPipe() {
+        static std::uint32_t next{0U};
+        const std::wstring name{L"\\\\.\\pipe\\common_test_" + std::to_wstring(test::process_id()) + L"_" +
+                                std::to_wstring(next)};
+        ++next;
+        device_ = ::CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                                     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1U,
+                                     kBufferSize, kBufferSize, 0U, nullptr);
+        port_ = ::CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0U, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED,
+                              nullptr);
+        port_event_ = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        device_event_ = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if ((device_ != INVALID_HANDLE_VALUE) && (port_ != INVALID_HANDLE_VALUE) && (device_event_ != nullptr)) {
+            // The port end is connected already: ConnectNamedPipe() then reports ERROR_PIPE_CONNECTED.
+            OVERLAPPED overlapped{};
+            overlapped.hEvent = device_event_;
+            connected_ = (::ConnectNamedPipe(device_, &overlapped) != FALSE) || (::GetLastError() == ERROR_PIPE_CONNECTED);
+        }
+    }
+    ~OverlappedPipe() {
+        close_device();
+        for (const HANDLE handle : {port_, port_event_, device_event_}) {
+            if ((handle != nullptr) && (handle != INVALID_HANDLE_VALUE)) {
+                static_cast<void>(::CloseHandle(handle));
+            }
+        }
+    }
+    OverlappedPipe(const OverlappedPipe&) = delete;
+    OverlappedPipe& operator=(const OverlappedPipe&) = delete;
+    OverlappedPipe(OverlappedPipe&&) = delete;
+    OverlappedPipe& operator=(OverlappedPipe&&) = delete;
+
+    [[nodiscard]] bool valid() const {
+        return connected_ && (port_event_ != nullptr);
+    }
+
+    /// One overlapped read on the port end, as SerialPort::read() makes it.
+    [[nodiscard]] common::Result<std::size_t> read(const common::Span<std::uint8_t> buffer,
+                                                   const common::Deadline& deadline) const {
+        return common::detail::read_overlapped(port_, port_event_, buffer, deadline);
+    }
+
+    /// One overlapped write on the port end, as SerialPort::write_all() makes it.
+    [[nodiscard]] common::Result<std::size_t> write(const common::Span<const std::uint8_t> data,
+                                                    const common::Deadline& deadline) const {
+        return common::detail::write_overlapped(port_, port_event_, data, deadline);
+    }
+
+    /// The device sends @p text.
+    bool send(const std::string& text) const {
+        const common::Result<std::size_t> sent{
+            common::detail::write_overlapped(device_, device_event_, bytes_of(text), common::Deadline::after(1s))};
+        return sent.value_or(0U) == text.size();
+    }
+
+    /// Collects what the port sent, until @p count bytes arrived or 1 s passed.
+    [[nodiscard]] std::string receive(const std::size_t count) const {
+        std::string text{};
+        std::array<std::uint8_t, 256U> buffer{};
+        const common::Deadline deadline{common::Deadline::after(1s)};
+        for (std::uint32_t round{0U}; (round < 100U) && (text.size() < count); ++round) {
+            const common::Result<std::size_t> got{
+                common::detail::read_overlapped(device_, device_event_, buffer, deadline)};
+            if (!got.has_value()) {
+                break;
+            }
+            text.append(reinterpret_cast<const char*>(buffer.data()), got.value());
+        }
+        return text;
+    }
+
+    /// The device goes away.
+    void close_device() {
+        if (device_ != INVALID_HANDLE_VALUE) {
+            static_cast<void>(::CloseHandle(device_));
+            device_ = INVALID_HANDLE_VALUE;
+        }
+    }
+
+private:
+    HANDLE device_{INVALID_HANDLE_VALUE};
+    HANDLE port_{INVALID_HANDLE_VALUE};
+    HANDLE port_event_{nullptr};
+    HANDLE device_event_{nullptr};
+    bool connected_{false};
+};
+#endif
 
 }  // namespace
 
 TEST_CASE(serial_port_open_errors) {
     common::SerialPort port{};
     CHECK(!port.is_open());
-    CHECK(port.descriptor() == -1);
+    CHECK(port.descriptor() == common::kInvalidNativeHandle);
     CHECK(port.open(nullptr, common::SerialOptions{}) == common::Status::kInvalidArgument);
+#if defined(_WIN32)
+    CHECK(port.open("COM255", common::SerialOptions{}) == common::Status::kNotFound);
+    CHECK(port.open("NUL", common::SerialOptions{}) == common::Status::kInvalidArgument);  // Not a serial port.
+    CHECK(port.open("\\\\.\\NUL", common::SerialOptions{}) == common::Status::kInvalidArgument);
+#else
     CHECK(port.open("/nonexistent/ttyUSB9", common::SerialOptions{}) == common::Status::kNotFound);
     CHECK(port.open("/dev/null", common::SerialOptions{}) == common::Status::kInvalidArgument);  // Not a terminal.
+#endif
     CHECK(!port.is_open());
 
     // Operations on a closed port.
@@ -133,11 +243,49 @@ TEST_CASE(serial_port_open_errors) {
     CHECK(port.discard_output() == common::Status::kInvalidArgument);
     CHECK(common::is_ok(port.close()));
 
+#if !defined(_WIN32)
     PseudoTerminal terminal{};
     REQUIRE(terminal.valid());
     CHECK(common::is_ok(port.open(terminal.slave_path(), common::SerialOptions{})));
     CHECK(port.open(terminal.slave_path(), common::SerialOptions{}) == common::Status::kInvalidArgument);
+#endif
 }
+
+TEST_CASE(serial_port_baud_rates_from_bits_per_second) {
+    CHECK(common::baud_rate_from_bits_per_second(38'400U).value() == common::BaudRate::k38400);
+    CHECK(common::baud_rate_from_bits_per_second(4'000'000U).value() == common::BaudRate::k4000000);
+    CHECK(common::baud_rate_from_bits_per_second(12'345U).status() == common::Status::kNotSupported);
+}
+
+// Opt-in: COMMON_TEST_SERIAL_PORT names a real serial port (e.g. "COM4" or "/dev/ttyUSB0"). The test
+// opens it, changes and reads back the speed and waits for input, but sends nothing.
+TEST_CASE(serial_port_device_from_environment) {
+    const std::string name{test::environment("COMMON_TEST_SERIAL_PORT")};
+    if (name.empty()) {
+        return;
+    }
+    common::SerialPort port{};
+    REQUIRE(common::is_ok(port.open(name.c_str(), common::SerialOptions{})));
+    CHECK(port.baud_rate().value_or(common::BaudRate::k1200) == common::BaudRate::k38400);
+    CHECK(common::is_ok(port.set_baud_rate(common::BaudRate::k115200)));
+    CHECK(port.baud_rate().value_or(common::BaudRate::k1200) == common::BaudRate::k115200);
+    common::SerialPort second{};
+    CHECK(second.open(name.c_str(), common::SerialOptions{}) == common::Status::kResourceLimit);  // In use.
+
+    std::array<std::uint8_t, 64U> buffer{};
+    const common::TimePoint start{common::MonotonicClock::now()};
+    const common::Result<std::size_t> got{port.read(buffer, common::Deadline::after(50ms))};
+    CHECK(got.has_value() || (got.status() == common::Status::kTimeout));
+    if (!got.has_value()) {
+        CHECK((common::MonotonicClock::now() - start) >= 50ms);
+    }
+    CHECK(common::is_ok(port.discard_input()));
+    CHECK(common::is_ok(port.discard_output()));
+    CHECK(common::is_ok(port.drain()));
+    CHECK(common::is_ok(port.close()));
+}
+
+#if !defined(_WIN32)
 
 TEST_CASE(serial_port_raw_round_trip) {
     PseudoTerminal terminal{};
@@ -235,10 +383,6 @@ TEST_CASE(serial_port_settings) {
     CHECK(port.baud_rate().value() == common::BaudRate::k500000);
     CHECK(common::is_ok(port.set_baud_rate(common::BaudRate::k9600)));
     CHECK(port.baud_rate().value() == common::BaudRate::k9600);
-
-    CHECK(common::baud_rate_from_bits_per_second(38'400U).value() == common::BaudRate::k38400);
-    CHECK(common::baud_rate_from_bits_per_second(4'000'000U).value() == common::BaudRate::k4000000);
-    CHECK(common::baud_rate_from_bits_per_second(12'345U).status() == common::Status::kNotSupported);
 }
 
 TEST_CASE(serial_port_exclusive_and_move) {
@@ -283,3 +427,73 @@ TEST_CASE(serial_port_reports_disconnect) {
     CHECK(port.write_all(buffer, common::Deadline::after(1s)) == common::Status::kDisconnected);
     CHECK(common::is_ok(port.close()));
 }
+
+#else
+
+TEST_CASE(serial_port_overlapped_read) {
+    OverlappedPipe pipe{};
+    REQUIRE(pipe.valid());
+    std::array<std::uint8_t, 64U> buffer{};
+
+    // Bytes that are there already come back at once.
+    REQUIRE(pipe.send("ATZ\r"));
+    CHECK(pipe.read(buffer, common::Deadline::after(1s)).value_or(0U) == 4U);
+    CHECK(std::memcmp(buffer.data(), "ATZ\r", 4U) == 0);
+
+    // Nothing arrives: the read is cancelled at its deadline, not before.
+    const common::TimePoint start{common::MonotonicClock::now()};
+    CHECK(pipe.read(buffer, common::Deadline::after(30ms)).status() == common::Status::kTimeout);
+    CHECK((common::MonotonicClock::now() - start) >= 30ms);
+
+    // An expired deadline still takes what is already there.
+    CHECK(pipe.read(buffer, common::Deadline{}).status() == common::Status::kTimeout);
+    REQUIRE(pipe.send("OK"));
+    CHECK(pipe.read(buffer, common::Deadline{}).value_or(0U) == 2U);
+
+    // A read that waits ends as soon as data arrives.
+    std::thread device{[&pipe]() {
+        std::this_thread::sleep_for(20ms);
+        static_cast<void>(pipe.send(">"));
+    }};
+    const common::TimePoint waiting{common::MonotonicClock::now()};
+    CHECK(pipe.read(buffer, common::Deadline::after(5s)).value_or(0U) == 1U);
+    CHECK((common::MonotonicClock::now() - waiting) < 4s);
+    device.join();
+}
+
+TEST_CASE(serial_port_overlapped_write) {
+    OverlappedPipe pipe{};
+    REQUIRE(pipe.valid());
+    CHECK(pipe.write(bytes_of("AT\r"), common::Deadline::after(1s)).value_or(0U) == 3U);
+    CHECK(pipe.receive(3U) == "AT\r");
+
+    // Nobody reads: the write waits for room, and is cancelled at its deadline with part of the data
+    // written, or none.
+    const std::string block(1024U * 1024U, 'x');
+    const common::TimePoint start{common::MonotonicClock::now()};
+    const common::Result<std::size_t> sent{pipe.write(bytes_of(block), common::Deadline::after(50ms))};
+    CHECK((sent.status() == common::Status::kTimeout) || (sent.value_or(block.size()) < block.size()));
+    CHECK((common::MonotonicClock::now() - start) >= 50ms);
+}
+
+TEST_CASE(serial_port_overlapped_disconnect) {
+    std::array<std::uint8_t, 8U> buffer{};
+    {
+        OverlappedPipe pipe{};
+        REQUIRE(pipe.valid());
+        pipe.close_device();
+        CHECK(pipe.read(buffer, common::Deadline::after(1s)).status() == common::Status::kDisconnected);
+        CHECK(pipe.write(bytes_of("x"), common::Deadline::after(1s)).status() == common::Status::kDisconnected);
+    }
+    // The device goes away while a read waits.
+    OverlappedPipe pipe{};
+    REQUIRE(pipe.valid());
+    std::thread unplug{[&pipe]() {
+        std::this_thread::sleep_for(20ms);
+        pipe.close_device();
+    }};
+    CHECK(pipe.read(buffer, common::Deadline::after(5s)).status() == common::Status::kDisconnected);
+    unplug.join();
+}
+
+#endif

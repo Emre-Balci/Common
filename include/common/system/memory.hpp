@@ -14,12 +14,13 @@
 namespace common {
 
 /// Locks all current and future pages in RAM (mlockall(MCL_CURRENT | MCL_FUTURE)).
-/// @return kResourceLimit if RLIMIT_MEMLOCK is too small, kPermissionDenied without privilege.
+/// @return kResourceLimit if RLIMIT_MEMLOCK is too small, kPermissionDenied without privilege;
+///         kNotSupported on Windows, which has no equivalent (MappedFile::lock() locks a mapping).
 Status lock_process_memory() noexcept;
 
 /// Stops glibc malloc from returning memory to the OS (trim) and from serving requests with
 /// mmap, so memory allocated during initialisation stays mapped and locked.
-/// @return kNotSupported on non-glibc systems.
+/// @return kNotSupported on non-glibc systems, including Windows.
 Status configure_allocator_for_rt() noexcept;
 
 /// Touches @p Bytes of the calling thread's stack so later use does not page-fault.

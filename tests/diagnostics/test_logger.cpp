@@ -1,6 +1,3 @@
-#include <fcntl.h>
-#include <unistd.h>
-
 #include <array>
 #include <atomic>
 #include <cfloat>
@@ -20,6 +17,7 @@
 #include "common/diagnostics/logger.hpp"
 #include "common/time/clock.hpp"
 #include "test_framework.hpp"
+#include "test_platform.hpp"
 
 namespace {
 
@@ -356,9 +354,9 @@ TEST_CASE(logger_counts_and_reports_drops) {
 }
 
 TEST_CASE(logger_write_to_file_descriptor) {
-    std::array<int, 2U> pipe_ends{{-1, -1}};
-    REQUIRE(::pipe(pipe_ends.data()) == 0);
-    int write_end{pipe_ends[1U]};
+    common::NativeHandle read_end{common::kInvalidNativeHandle};
+    common::NativeHandle write_end{common::kInvalidNativeHandle};
+    REQUIRE(test::create_pipe(read_end, write_end));
     const std::string_view line{"12.000000000 INFO hello\n"};
     common::write_log_line_to_fd(line.data(), line.size(), &write_end);
     common::write_log_line_to_fd(nullptr, 0U, &write_end);  // Nothing to write.
@@ -366,22 +364,27 @@ TEST_CASE(logger_write_to_file_descriptor) {
     common::Logger<4U> logger{};
     logger.log_at(kTime, common::LogLevel::kError, "code {}", 7);
     CHECK(logger.drain(&common::write_log_line_to_fd, &write_end, 4U) == 1U);
-    static_cast<void>(::close(write_end));
+    static_cast<void>(test::close_native(write_end));
 
     std::array<char, 256U> buffer{};
     std::string received{};
     for (std::uint32_t round{0U}; round < 100U; ++round) {
-        const ssize_t count{::read(pipe_ends[0U], buffer.data(), buffer.size())};
+        const std::int64_t count{test::read_native(read_end, buffer.data(), buffer.size())};
         if (count <= 0) {
             break;
         }
         received.append(buffer.data(), static_cast<std::size_t>(count));
     }
-    static_cast<void>(::close(pipe_ends[0U]));
+    static_cast<void>(test::close_native(read_end));
     CHECK(received == "12.000000000 INFO hello\n12.000345120 ERROR code 7\n");
 
     // A failing write drops the line instead of reporting or blocking.
-    int closed_descriptor{write_end};
+#if defined(_WIN32)
+    // Windows can hand out the value of a closed handle again at once; no handle has this one.
+    common::NativeHandle closed_descriptor{common::kInvalidNativeHandle};
+#else
+    common::NativeHandle closed_descriptor{write_end};
+#endif
     common::write_log_line_to_fd(line.data(), line.size(), &closed_descriptor);
 }
 

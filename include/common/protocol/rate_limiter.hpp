@@ -132,10 +132,12 @@ private:
         return TimePoint{Duration{nanoseconds}};
     }
 
-    Duration window_;
     // Admitted timestamps in nanoseconds, oldest first. Stored as integers because the default
     // constructor of std::chrono::time_point is not noexcept, which RingBuffer requires.
+    // Declared before window_: MSVC 19.40 (VS 2022 17.10) at /O2 loses the value of window_ when
+    // window_ comes first and the zero-initialised history_ follows it (an SSA optimizer bug).
     RingBuffer<std::int64_t, MaxEvents> history_{};
+    Duration window_;
 };
 
 }  // namespace common

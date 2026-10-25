@@ -1,53 +1,25 @@
+#if !defined(_WIN32)
 #include <sys/stat.h>
-#include <unistd.h>
+#endif
 
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include <vector>
+#include <utility>
 
 #include "common/containers/span.hpp"
+#include "common/core/config.hpp"
 #include "common/core/status.hpp"
 #include "common/file/file.hpp"
+#include "temp_directory.hpp"
 #include "test_framework.hpp"
+#include "test_platform.hpp"
 
 namespace {
 
-/// A private directory under /tmp that is removed, with the files listed in it, afterwards.
-class TempDirectory final {
-public:
-    TempDirectory() {
-        std::string pattern{"/tmp/common_file_test_XXXXXX"};
-        const char* const created{::mkdtemp(pattern.data())};
-        path_ = (created != nullptr) ? std::string{created} : std::string{};
-    }
-    ~TempDirectory() {
-        for (const std::string& name : names_) {
-            static_cast<void>(::unlink((path_ + "/" + name).c_str()));
-            static_cast<void>(::rmdir((path_ + "/" + name).c_str()));
-        }
-        static_cast<void>(::rmdir(path_.c_str()));
-    }
-    TempDirectory(const TempDirectory&) = delete;
-    TempDirectory& operator=(const TempDirectory&) = delete;
-    TempDirectory(TempDirectory&&) = delete;
-    TempDirectory& operator=(TempDirectory&&) = delete;
-
-    [[nodiscard]] bool valid() const {
-        return !path_.empty();
-    }
-    /// Path of an entry in the directory; it is deleted when the directory goes away.
-    [[nodiscard]] std::string entry(const char* const name) {
-        names_.emplace_back(name);
-        return path_ + "/" + name;
-    }
-
-private:
-    std::string path_;
-    std::vector<std::string> names_;
-};
+using test::TempDirectory;
 
 common::Span<const std::uint8_t> bytes_of(const char* const text) {
     return common::Span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(text), std::strlen(text)};
@@ -83,7 +55,7 @@ TEST_CASE(file_open_modes) {
     common::File file{};
     CHECK(file.open(path.c_str(), common::FileOptions{}) == common::Status::kNotFound);
     CHECK(!file.is_open());
-    CHECK(file.descriptor() == -1);
+    CHECK(file.descriptor() == common::kInvalidNativeHandle);
     CHECK(file.open(nullptr, common::FileOptions{}) == common::Status::kInvalidArgument);
 
     const common::FileOptions create_new{options(common::FileAccess::kWriteOnly, common::FileCreation::kCreateNew)};
@@ -178,12 +150,12 @@ TEST_CASE(file_append_and_preallocate) {
 }
 
 TEST_CASE(file_ownership_transfer) {
-    std::array<int, 2U> pipe_ends{-1, -1};
-    REQUIRE(::pipe(pipe_ends.data()) == 0);
+    std::array<common::NativeHandle, 2U> pipe_ends{common::kInvalidNativeHandle, common::kInvalidNativeHandle};
+    REQUIRE(test::create_pipe(pipe_ends[0U], pipe_ends[1U]));
 
     common::File reader{};
     common::File writer{};
-    CHECK(reader.adopt(-1) == common::Status::kInvalidArgument);
+    CHECK(reader.adopt(common::kInvalidNativeHandle) == common::Status::kInvalidArgument);
     REQUIRE(common::is_ok(reader.adopt(pipe_ends[0U])));
     REQUIRE(common::is_ok(writer.adopt(pipe_ends[1U])));
     CHECK(writer.adopt(pipe_ends[1U]) == common::Status::kInvalidArgument);  // Already open.
@@ -199,11 +171,11 @@ TEST_CASE(file_ownership_transfer) {
     CHECK(common::is_ok(assigned.read_exact(common::Span<std::uint8_t>{received})));
     CHECK(std::memcmp(received.data(), "ping", 4U) == 0);
 
-    const std::int32_t raw{assigned.release()};
+    const common::NativeHandle raw{assigned.release()};
     CHECK(raw == pipe_ends[0U]);
     CHECK(!assigned.is_open());
-    CHECK(assigned.release() == -1);
-    CHECK(::close(raw) == 0);
+    CHECK(assigned.release() == common::kInvalidNativeHandle);
+    CHECK(test::close_native(raw));
 }
 
 TEST_CASE(file_closed_handle) {
@@ -242,9 +214,11 @@ TEST_CASE(file_system_operations) {
     CHECK(common::is_ok(file.write_all(bytes_of("old contents"))));
     CHECK(common::is_ok(file.close()));
 
+#if !defined(_WIN32)  // Windows has no permission bits.
     struct stat info {};
     REQUIRE(::stat(first.c_str(), &info) == 0);
     CHECK((info.st_mode & 0777U) == 0600U);
+#endif
     CHECK(common::file_exists(first.c_str()).value_or(false));
     CHECK(common::file_size(first.c_str()).value_or(0U) == 3U);
 

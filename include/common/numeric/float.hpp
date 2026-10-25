@@ -42,8 +42,9 @@ struct FpExceptions final {
 void clear_fp_exceptions() noexcept;
 [[nodiscard]] FpExceptions test_fp_exceptions() noexcept;
 
-/// Makes invalid, divide-by-zero and overflow raise SIGFPE on the calling thread.
-/// Intended for test and debug builds to locate the first faulty operation.
+/// Makes invalid, divide-by-zero and overflow raise SIGFPE on the calling thread (on Windows, a
+/// floating-point structured exception, which the C runtime turns into SIGFPE for a handler
+/// installed with signal()). Intended for test and debug builds to locate the first faulty operation.
 Status enable_fp_traps() noexcept;
 Status disable_fp_traps() noexcept;
 
@@ -71,15 +72,15 @@ template <typename I, typename F>
 [[nodiscard]] I saturating_cast(const F value) noexcept {
     static_assert(std::is_integral<I>::value, "I must be an integral type");
     static_assert(std::is_floating_point<F>::value, "F must be a floating-point type");
-    constexpr I kMax{std::numeric_limits<I>::max()};
-    constexpr I kMin{std::numeric_limits<I>::min()};
+    constexpr I kTypeMax{std::numeric_limits<I>::max()};
+    constexpr I kTypeMin{std::numeric_limits<I>::min()};
     I result{0};
     if (std::isnan(value)) {
         result = 0;
-    } else if (value >= static_cast<F>(kMax)) {
-        result = kMax;  // static_cast<F>(kMax) may round up to 2^N, which is out of range.
-    } else if (value <= static_cast<F>(kMin)) {
-        result = kMin;
+    } else if (value >= static_cast<F>(kTypeMax)) {
+        result = kTypeMax;  // static_cast<F>(kTypeMax) may round up to 2^N, which is out of range.
+    } else if (value <= static_cast<F>(kTypeMin)) {
+        result = kTypeMin;
     } else {
         result = static_cast<I>(value);
     }

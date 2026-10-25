@@ -1,6 +1,8 @@
 #include "common/diagnostics/logger.hpp"
 
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 
 #include <array>
 #include <cerrno>
@@ -16,14 +18,20 @@
 #include "common/numeric/float.hpp"
 #include "common/time/clock.hpp"
 
+#if defined(_WIN32)
+#include "detail/win32.hpp"
+#endif
+
 namespace common {
 namespace {
 
 // format_log_record() reads at most this many characters of a format string.
 constexpr std::size_t kMaxFormatLength{4096U};
 
+#if !defined(_WIN32)
 // An EINTR restart makes no progress; the bound only guards against a signal storm.
 constexpr std::uint32_t kMaxWriteRestarts{1000U};
+#endif
 
 // Digits are written through this table, so the numerical value of a character is never used
 // (MISRA C++:2023 Rule 7.0.3).
@@ -300,9 +308,22 @@ void write_log_line_to_fd(const char* const text, const std::size_t length, void
     COMMON_ASSERT((text != nullptr) || (length == 0U));
     // The guard drops the line when assertions are disabled.
     if ((context != nullptr) && (text != nullptr)) {
-        const int descriptor{*static_cast<const int*>(context)};
+        const NativeHandle descriptor{*static_cast<const NativeHandle*>(context)};
         const Span<const char> line{text, length};
         std::size_t written{0U};
+#if defined(_WIN32)
+        // Each round writes at least one byte or ends the loop.
+        for (std::size_t round{0U}; (written < length) && (round < length); ++round) {
+            const Span<const char> rest{line.subspan(written)};
+            DWORD count{0U};
+            if ((::WriteFile(descriptor, rest.data(), detail::transfer_count(rest.size()), &count, nullptr) != FALSE) &&
+                (count > 0U)) {
+                written += count;
+            } else {
+                break;  // A sink cannot report errors: the rest of the line is dropped.
+            }
+        }
+#else
         std::uint32_t restarts{0U};
         // Each round writes at least one byte, or restarts after EINTR, or ends the loop.
         for (std::size_t round{0U}; (written < length) && (round < (length + kMaxWriteRestarts)); ++round) {
@@ -316,6 +337,7 @@ void write_log_line_to_fd(const char* const text, const std::size_t length, void
                 break;  // A sink cannot report errors: the rest of the line is dropped.
             }
         }
+#endif
     }
 }
 

@@ -1,9 +1,11 @@
 #include "common/file/mapped_file.hpp"
 
+#if !defined(_WIN32)
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 #include <cerrno>
 #include <cstddef>
@@ -14,15 +16,86 @@
 #include "common/core/config.hpp"
 #include "common/core/status.hpp"
 #include "common/file/file.hpp"
+
+#if defined(_WIN32)
+#include "detail/win32.hpp"
+#include "detail/win32_status.hpp"
+#else
 #include "detail/posix_status.hpp"
+#endif
 
 namespace common {
 namespace {
 
-static_assert(sizeof(off_t) == sizeof(std::int64_t), "a 64-bit off_t is required");
-
 // Permission bits accepted for new files (octal 07777).
 constexpr std::uint32_t kMaxPermissions{0xFFFU};
+
+#if defined(_WIN32)
+
+Status last_error() noexcept {
+    return detail::last_win32_error();
+}
+
+/// The page protection of the file mapping object for @p mode.
+DWORD protection_of(const MapMode mode) noexcept {
+    DWORD protection{PAGE_READONLY};
+    switch (mode) {
+        case MapMode::kReadOnly:
+            protection = PAGE_READONLY;
+            break;
+        case MapMode::kReadWrite:
+            protection = PAGE_READWRITE;
+            break;
+        case MapMode::kCopyOnWrite:
+            protection = PAGE_WRITECOPY;
+            break;
+    }
+    return protection;
+}
+
+/// The access of the view for @p mode.
+DWORD view_access_of(const MapMode mode) noexcept {
+    DWORD access{FILE_MAP_READ};
+    switch (mode) {
+        case MapMode::kReadOnly:
+            access = FILE_MAP_READ;
+            break;
+        case MapMode::kReadWrite:
+            access = FILE_MAP_WRITE;  // Reading included.
+            break;
+        case MapMode::kCopyOnWrite:
+            access = FILE_MAP_COPY;
+            break;
+    }
+    return access;
+}
+
+/// Starts reading the pages of @p size bytes at @p region in (PrefetchVirtualMemory), in larger
+/// pieces than page faults would. A hint: it does not wait for the reads.
+Status prefetch(void* const region, const std::size_t size) noexcept {
+    WIN32_MEMORY_RANGE_ENTRY range{};
+    range.VirtualAddress = region;
+    range.NumberOfBytes = size;
+    return (::PrefetchVirtualMemory(::GetCurrentProcess(), 1U, &range, 0U) != FALSE) ? Status::kOk : last_error();
+}
+
+/// Windows has no MAP_POPULATE: prefetches the view and touches every page of it, so that the pages
+/// are resident and mapped. Every page of a kCopyOnWrite view is written with its own value, which
+/// gives the view its private copy now rather than at the first write, as population does on Linux.
+void populate(void* const region, const std::size_t size, const MapMode mode) noexcept {
+    static_cast<void>(prefetch(region, size));
+    volatile std::uint8_t* const bytes{static_cast<volatile std::uint8_t*>(region)};
+    for (std::size_t offset{0U}; offset < size; offset += kPageSize) {
+        const std::uint8_t value{bytes[offset]};
+        if (mode == MapMode::kCopyOnWrite) {
+            bytes[offset] = value;
+        }
+    }
+}
+
+#else
+
+static_assert(sizeof(off_t) == sizeof(std::int64_t), "a 64-bit off_t is required");
 
 // POSIX defines the mmap(2) flags and file-type bits as int; flags are combined as unsigned values
 // and converted once at the call.
@@ -43,6 +116,20 @@ Status last_error() noexcept {
     return mapping_status(errno);
 }
 
+std::uint32_t protection_of(const MapMode mode) noexcept {
+    return (mode == MapMode::kReadOnly) ? to_bits(PROT_READ) : (to_bits(PROT_READ) | to_bits(PROT_WRITE));
+}
+
+std::uint32_t flags_of(const MapOptions& options) noexcept {
+    std::uint32_t flags{(options.mode == MapMode::kCopyOnWrite) ? to_bits(MAP_PRIVATE) : to_bits(MAP_SHARED)};
+    if (options.populate) {
+        flags |= to_bits(MAP_POPULATE);
+    }
+    return flags;
+}
+
+#endif
+
 [[nodiscard]] bool is_valid(const MapMode mode) noexcept {
     bool valid{false};
     switch (mode) {
@@ -55,15 +142,36 @@ Status last_error() noexcept {
     return valid;  // false for a value outside the enumeration.
 }
 
-/// The size of the pages the kernel maps; mappings start at a multiple of it.
-[[nodiscard]] std::uint64_t page_size() noexcept {
+/// The alignment of the start of a mapping in the file: the page size on Linux, the allocation
+/// granularity (64 KiB) on Windows.
+[[nodiscard]] std::uint64_t mapping_alignment() noexcept {
+#if defined(_WIN32)
+    SYSTEM_INFO info{};
+    ::GetSystemInfo(&info);
+    return (info.dwAllocationGranularity > 0U) ? std::uint64_t{info.dwAllocationGranularity}
+                                               : std::uint64_t{kPageSize};
+#else
     const long size{::sysconf(_SC_PAGESIZE)};
     return (size > 0) ? static_cast<std::uint64_t>(size) : std::uint64_t{kPageSize};
+#endif
 }
 
 /// @return the size of the regular file open at @p descriptor; kInvalidArgument for other file types.
-Result<std::uint64_t> regular_file_size(const std::int32_t descriptor) noexcept {
+Result<std::uint64_t> regular_file_size(const NativeHandle descriptor) noexcept {
     Result<std::uint64_t> result{Result<std::uint64_t>::failure(Status::kInvalidArgument)};
+#if defined(_WIN32)
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (::GetFileType(descriptor) != FILE_TYPE_DISK) {
+        // A pipe or a device: keep kInvalidArgument.
+    } else if (::GetFileInformationByHandle(descriptor, &info) == FALSE) {
+        result = Result<std::uint64_t>::failure(last_error());
+    } else if ((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0U) {
+        result = Result<std::uint64_t>::success((std::uint64_t{info.nFileSizeHigh} << 32U) |
+                                                std::uint64_t{info.nFileSizeLow});
+    } else {
+        // A directory: keep kInvalidArgument.
+    }
+#else
     struct stat info {};
     if (::fstat(descriptor, &info) != 0) {
         result = Result<std::uint64_t>::failure(last_error());
@@ -72,6 +180,7 @@ Result<std::uint64_t> regular_file_size(const std::int32_t descriptor) noexcept 
     } else {
         // Not a regular file: keep kInvalidArgument.
     }
+#endif
     return result;
 }
 
@@ -92,16 +201,43 @@ Result<std::uint64_t> range_length(const MapOptions& options, const std::uint64_
     return result;
 }
 
-std::uint32_t protection_of(const MapMode mode) noexcept {
-    return (mode == MapMode::kReadOnly) ? to_bits(PROT_READ) : (to_bits(PROT_READ) | to_bits(PROT_WRITE));
-}
-
-std::uint32_t flags_of(const MapOptions& options) noexcept {
-    std::uint32_t flags{(options.mode == MapMode::kCopyOnWrite) ? to_bits(MAP_PRIVATE) : to_bits(MAP_SHARED)};
-    if (options.populate) {
-        flags |= to_bits(MAP_POPULATE);
+/// Maps @p size bytes of the file open at @p descriptor, from @p start (a multiple of
+/// mapping_alignment()), as @p options say, and locks them if asked. Nothing stays mapped on failure.
+Status map_region(const NativeHandle descriptor, const MapOptions& options, const std::uint64_t start,
+                  const std::size_t size, void*& region) noexcept {
+#if defined(_WIN32)
+    // The view keeps the file mapping object alive, so its handle closes right away.
+    const HANDLE section{::CreateFileMappingW(descriptor, nullptr, protection_of(options.mode), 0U, 0U, nullptr)};
+    Status status{(section != nullptr) ? Status::kOk : last_error()};
+    if (is_ok(status)) {
+        region = ::MapViewOfFile(section, view_access_of(options.mode), static_cast<DWORD>(start >> 32U),
+                                 static_cast<DWORD>(start & 0xFFFFFFFFU), size);
+        status = (region != nullptr) ? Status::kOk : last_error();
+        static_cast<void>(::CloseHandle(section));
     }
-    return flags;
+    if (is_ok(status) && (options.populate || options.lock)) {
+        populate(region, size, options.mode);
+    }
+    if (is_ok(status) && options.lock && (::VirtualLock(region, size) == FALSE)) {
+        status = last_error();
+        static_cast<void>(::UnmapViewOfFile(region));
+        region = nullptr;
+    }
+    return status;
+#else
+    void* const mapped{::mmap(nullptr, size, static_cast<int>(protection_of(options.mode)),
+                              static_cast<int>(flags_of(options)), descriptor, static_cast<off_t>(start))};
+    Status status{Status::kOk};
+    if (mapped == MAP_FAILED) {
+        status = last_error();
+    } else if (options.lock && (::mlock(mapped, size) != 0)) {
+        status = last_error();
+        static_cast<void>(::munmap(mapped, size));
+    } else {
+        region = mapped;
+    }
+    return status;
+#endif
 }
 
 }  // namespace
@@ -116,6 +252,9 @@ MappedFile::MappedFile(MappedFile&& other) noexcept
       view_{other.view_},
       mode_{other.mode_},
       mapped_{other.mapped_} {
+#if defined(_WIN32)
+    file_ = other.file_;
+#endif
     other.reset();
 }
 
@@ -127,6 +266,9 @@ MappedFile& MappedFile::operator=(MappedFile&& other) noexcept {
         view_ = other.view_;
         mode_ = other.mode_;
         mapped_ = other.mapped_;
+#if defined(_WIN32)
+        file_ = other.file_;
+#endif
         other.reset();
     }
     return *this;
@@ -162,27 +304,33 @@ Status MappedFile::map(const File& file, const MapOptions& options) noexcept {
         mode_ = options.mode;
         mapped_ = true;
     } else if (is_ok(status)) {
-        // The kernel mapping starts at the page boundary at or below the offset.
-        const std::uint64_t page{page_size()};
-        const std::uint64_t lead{options.offset % page};
+        // The kernel mapping starts at the alignment boundary at or below the offset.
+        const std::uint64_t lead{options.offset % mapping_alignment()};
         if (length > (std::uint64_t{std::numeric_limits<std::size_t>::max()} - lead)) {
             status = Status::kOverflow;
         } else {
             const std::size_t region_size{lead + length};
-            void* const region{::mmap(nullptr, region_size, static_cast<int>(protection_of(options.mode)),
-                                      static_cast<int>(flags_of(options)), file.descriptor(),
-                                      static_cast<off_t>(options.offset - lead))};
-            if (region == MAP_FAILED) {
+            void* region{nullptr};
+            status = map_region(file.descriptor(), options, options.offset - lead, region_size, region);
+#if defined(_WIN32)
+            // sync() flushes a kReadWrite mapping's file to stable storage, which takes a handle to it.
+            HANDLE duplicate{nullptr};
+            if (is_ok(status) && (options.mode == MapMode::kReadWrite) &&
+                (::DuplicateHandle(::GetCurrentProcess(), file.descriptor(), ::GetCurrentProcess(), &duplicate, 0U,
+                                   FALSE, DUPLICATE_SAME_ACCESS) == FALSE)) {
                 status = last_error();
-            } else if (options.lock && (::mlock(region, region_size) != 0)) {
-                status = last_error();
-                static_cast<void>(::munmap(region, region_size));  // Nothing stays mapped on failure.
-            } else {
+                static_cast<void>(::UnmapViewOfFile(region));
+            }
+#endif
+            if (is_ok(status)) {
                 region_ = region;
                 region_size_ = region_size;
                 view_ = Span<std::uint8_t>{static_cast<std::uint8_t*>(region), region_size}.subspan(lead, length);
                 mode_ = options.mode;
                 mapped_ = true;
+#if defined(_WIN32)
+                file_ = duplicate;
+#endif
             }
         }
     } else {
@@ -223,9 +371,18 @@ Status MappedFile::unmap() noexcept {
     Status status{Status::kOk};
     if (mapped_) {
         if (region_ != nullptr) {
+#if defined(_WIN32)
+            status = (::UnmapViewOfFile(region_) != FALSE) ? Status::kOk : last_error();
+#else
             status = (::munmap(region_, region_size_) == 0) ? Status::kOk : last_error();
+#endif
         }
         if (is_ok(status)) {
+#if defined(_WIN32)
+            if (file_ != nullptr) {
+                static_cast<void>(::CloseHandle(file_));
+            }
+#endif
             reset();
         }
     }
@@ -236,7 +393,16 @@ Status MappedFile::unmap() noexcept {
 Status MappedFile::sync() noexcept {  // NOLINT(readability-make-member-function-const)
     Status status{mapped_ ? Status::kOk : Status::kInvalidArgument};
     if (is_ok(status) && (mode_ == MapMode::kReadWrite) && (region_ != nullptr)) {
+#if defined(_WIN32)
+        // FlushViewOfFile() writes the modified pages to the file; FlushFileBuffers() then waits until
+        // they and the file's metadata are on stable storage.
+        status = (::FlushViewOfFile(region_, region_size_) != FALSE) ? Status::kOk : last_error();
+        if (is_ok(status)) {
+            status = (::FlushFileBuffers(file_) != FALSE) ? Status::kOk : last_error();
+        }
+#else
         status = (::msync(region_, region_size_, MS_SYNC) == 0) ? Status::kOk : last_error();
+#endif
     }
     return status;
 }
@@ -245,7 +411,11 @@ Status MappedFile::sync() noexcept {  // NOLINT(readability-make-member-function
 Status MappedFile::lock() noexcept {  // NOLINT(readability-make-member-function-const)
     Status status{mapped_ ? Status::kOk : Status::kInvalidArgument};
     if (is_ok(status) && (region_ != nullptr)) {
+#if defined(_WIN32)
+        status = (::VirtualLock(region_, region_size_) != FALSE) ? Status::kOk : last_error();
+#else
         status = (::mlock(region_, region_size_) == 0) ? Status::kOk : last_error();
+#endif
     }
     return status;
 }
@@ -254,13 +424,36 @@ Status MappedFile::lock() noexcept {  // NOLINT(readability-make-member-function
 Status MappedFile::unlock() noexcept {  // NOLINT(readability-make-member-function-const)
     Status status{mapped_ ? Status::kOk : Status::kInvalidArgument};
     if (is_ok(status) && (region_ != nullptr)) {
+#if defined(_WIN32)
+        // Pages that are not locked are no error, as with munlock(2).
+        status = ((::VirtualUnlock(region_, region_size_) != FALSE) || (::GetLastError() == ERROR_NOT_LOCKED))
+                     ? Status::kOk
+                     : last_error();
+#else
         status = (::munlock(region_, region_size_) == 0) ? Status::kOk : last_error();
+#endif
     }
     return status;
 }
 
 // Not const: it changes how the kernel pages the mapping in and out.
 Status MappedFile::advise(const Advice advice) noexcept {  // NOLINT(readability-make-member-function-const)
+#if defined(_WIN32)
+    bool valid{false};
+    switch (advice) {
+        case Advice::kNormal:
+        case Advice::kSequential:
+        case Advice::kRandom:
+        case Advice::kWillNeed:
+            valid = true;
+            break;
+    }
+    Status status{(mapped_ && valid) ? Status::kOk : Status::kInvalidArgument};
+    // Windows has an equivalent of kWillNeed only; the other advice changes nothing there.
+    if (is_ok(status) && (region_ != nullptr) && (advice == Advice::kWillNeed)) {
+        status = prefetch(region_, region_size_);
+    }
+#else
     int value{MADV_NORMAL};
     bool valid{false};
     switch (advice) {
@@ -285,6 +478,7 @@ Status MappedFile::advise(const Advice advice) noexcept {  // NOLINT(readability
     if (is_ok(status) && (region_ != nullptr)) {
         status = (::madvise(region_, region_size_, value) == 0) ? Status::kOk : last_error();
     }
+#endif
     return status;
 }
 
@@ -294,6 +488,9 @@ void MappedFile::reset() noexcept {
     view_ = Span<std::uint8_t>{};
     mode_ = MapMode::kReadOnly;
     mapped_ = false;
+#if defined(_WIN32)
+    file_ = nullptr;
+#endif
 }
 
 }  // namespace common

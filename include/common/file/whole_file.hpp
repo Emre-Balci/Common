@@ -68,16 +68,18 @@ Status write_file(const char* path, Span<const std::uint8_t> contents, std::uint
 /// same process id, the next n is tried, up to 8 names. If any step up to the rename fails, the
 /// temporary file is removed and @p path is left untouched.
 ///
-/// - @p path must not be empty, must not end with '/', and may be at most 4069 bytes long
-///   (PATH_MAX of 4096 minus the longest suffix of 26 bytes and the terminating NUL). The file
-///   name plus the suffix must also fit the file system's limit for one name (usually 255 bytes).
-/// - The new file gets @p permissions (at most 0xFFF, before the umask), whatever the old file
-///   had. A symbolic link at @p path is replaced, not followed. Only the directory has to be
-///   writable, not the old file.
+/// - @p path must not be empty, must not end with '/' (on Windows, nor with '\\'), and may be at
+///   most 4069 bytes long (PATH_MAX of 4096 minus the longest suffix of 26 bytes and the
+///   terminating NUL). The file name plus the suffix must also fit the file system's limit for one
+///   name (usually 255 bytes).
+/// - The new file gets @p permissions (at most 0xFFF, before the umask; checked but without effect
+///   on Windows), whatever the old file had. A symbolic link at @p path is replaced, not followed.
+///   Only the directory has to be writable, not the old file.
 /// - A crash during the call can leave a temporary file behind. It never affects @p path and may
 ///   be deleted.
 /// - Threads and processes may replace the same file at the same time: every rename is atomic and
-///   the last one wins.
+///   the last one wins. On Windows that holds where rename_file() has POSIX semantics (NTFS): readers
+///   that have the old file open do not block its replacement.
 /// @return kOk; kInvalidArgument for an invalid path (including nullptr) or permissions;
 ///         kNotFound if the directory does not exist; kAlreadyExists if all 8 temporary names
 ///         were taken; otherwise File's error codes, e.g. kResourceLimit (disk full). If only the

@@ -1,12 +1,18 @@
 #include "common/core/assert.hpp"
 
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 
 #include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+
+#if defined(_WIN32)
+#include "detail/win32.hpp"
+#endif
 
 namespace common {
 namespace {
@@ -15,11 +21,18 @@ namespace {
 // (MISRA C++:2023 Rule 7.0.3).
 constexpr std::array<char, 10U> kDigitChars{{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'}};
 
-// write(2) is async-signal-safe and does not allocate, unlike stdio.
+// write(2) is async-signal-safe and does not allocate, unlike stdio. On Windows, WriteFile() on the
+// standard error handle does not allocate either, and takes no lock of the C runtime.
 void write_stderr(const char* const text) noexcept {
     if (text != nullptr) {
+#if defined(_WIN32)
+        DWORD written{0U};
+        static_cast<void>(::WriteFile(::GetStdHandle(STD_ERROR_HANDLE), text, detail::transfer_count(std::strlen(text)),
+                                      &written, nullptr));
+#else
         const ssize_t written{::write(STDERR_FILENO, text, std::strlen(text))};
         static_cast<void>(written);
+#endif
     }
 }
 

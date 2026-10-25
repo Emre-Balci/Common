@@ -6,6 +6,11 @@
 
 #include <atomic>
 
+// MSVC has no GCC builtins or inline assembly on x64 and ARM64, but intrinsics for both hints.
+#if defined(_M_X64) || defined(_M_IX86) || defined(_M_ARM64)
+#include <intrin.h>
+#endif
+
 #include "common/core/config.hpp"
 
 namespace common {
@@ -18,6 +23,10 @@ inline void cpu_relax() noexcept {
 #elif defined(__aarch64__)
     // Deviation (MISRA C++:2023 Rule 10.4.1): no portable intrinsic exists for the AArch64 yield hint.
     asm volatile("yield" ::: "memory");
+#elif defined(_M_X64) || defined(_M_IX86)
+    _mm_pause();
+#elif defined(_M_ARM64)
+    __yield();
 #else
     std::atomic_signal_fence(std::memory_order_seq_cst);
 #endif

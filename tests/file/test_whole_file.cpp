@@ -1,5 +1,7 @@
+#if !defined(_WIN32)
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #include <array>
 #include <atomic>
@@ -12,9 +14,11 @@
 
 #include "common/containers/span.hpp"
 #include "common/core/status.hpp"
+#include "common/file/file.hpp"
 #include "common/file/whole_file.hpp"
 #include "temp_directory.hpp"
 #include "test_framework.hpp"
+#include "test_platform.hpp"
 
 namespace {
 
@@ -30,6 +34,7 @@ std::string contents_of(const std::string& path) {
                              : std::string{"<error>"};
 }
 
+#if !defined(_WIN32)
 /// Permission bits of @p path, or 0xFFFFFFFF.
 std::uint32_t permissions_of(const std::string& path) {
     struct stat info {};
@@ -41,6 +46,19 @@ std::uint32_t after_umask(const std::uint32_t requested) {
     const mode_t mask{::umask(0)};
     static_cast<void>(::umask(mask));
     return requested & ~static_cast<std::uint32_t>(mask);
+}
+#endif
+
+/// @return true if @p path has the permission bits that a file created with @p requested gets
+///         under the current umask; always true on Windows, which has no permission bits.
+bool has_permissions(const std::string& path, const std::uint32_t requested) {
+#if defined(_WIN32)
+    static_cast<void>(path);
+    static_cast<void>(requested);
+    return true;
+#else
+    return permissions_of(path) == after_umask(requested);
+#endif
 }
 
 bool has_temporary_files(const test::TempDirectory& directory) {
@@ -59,7 +77,7 @@ TEST_CASE(whole_file_atomic_write_gives_up_when_names_are_taken) {
     test::TempDirectory directory{};
     REQUIRE(directory.valid());
     const std::string path{directory.entry("state")};
-    const std::string pid{std::to_string(::getpid())};
+    const std::string pid{std::to_string(test::process_id())};
     for (std::uint32_t n{0U}; n < 64U; ++n) {
         REQUIRE(common::is_ok(common::write_file((path + ".tmp." + pid + "." + std::to_string(n)).c_str(),
                                                  bytes_of("taken"), 0x1A4U)));
@@ -90,10 +108,12 @@ TEST_CASE(whole_file_read_file) {
     CHECK(common::read_file(nullptr, small).status() == common::Status::kInvalidArgument);
     CHECK(common::read_file(directory.path().c_str(), small).status() == common::Status::kInvalidArgument);
 
+#if !defined(_WIN32)
     // /proc reports a size of 0 but has contents: read_file() reads to the end of file.
     std::array<std::uint8_t, 4096U> proc{};
     const common::Result<std::size_t> stat_count{common::read_file("/proc/self/stat", proc)};
     CHECK(stat_count.value_or(0U) > 0U);
+#endif
 }
 
 TEST_CASE(whole_file_read_text_file) {
@@ -132,12 +152,12 @@ TEST_CASE(whole_file_write_file) {
     const std::string path{directory.entry("out")};
     CHECK(common::is_ok(common::write_file(path.c_str(), bytes_of("first version"), 0x180U)));
     CHECK(contents_of(path) == "first version");
-    CHECK(permissions_of(path) == after_umask(0x180U));  // Octal 0600.
+    CHECK(has_permissions(path, 0x180U));  // Octal 0600.
 
     // An existing file is truncated and keeps its permission bits.
     CHECK(common::is_ok(common::write_file(path.c_str(), bytes_of("v2"), 0x1FFU)));
     CHECK(contents_of(path) == "v2");
-    CHECK(permissions_of(path) == after_umask(0x180U));
+    CHECK(has_permissions(path, 0x180U));
 
     CHECK(common::write_file(nullptr, bytes_of("x"), 0x1A4U) == common::Status::kInvalidArgument);
     CHECK(common::write_file(path.c_str(), bytes_of("x"), 0x1000U) == common::Status::kInvalidArgument);
@@ -152,14 +172,15 @@ TEST_CASE(whole_file_write_file_atomically) {
     const std::string path{directory.entry("sequence")};
     CHECK(common::is_ok(common::write_file_atomically(path.c_str(), bytes_of("1000"), 0x180U)));
     CHECK(contents_of(path) == "1000");
-    CHECK(permissions_of(path) == after_umask(0x180U));
+    CHECK(has_permissions(path, 0x180U));
     CHECK(common::is_ok(common::write_file_atomically(path.c_str(), bytes_of("1001"), 0x1A4U)));
     CHECK(contents_of(path) == "1001");
-    CHECK(permissions_of(path) == after_umask(0x1A4U));  // The new file's bits, not the old file's.
+    CHECK(has_permissions(path, 0x1A4U));  // The new file's bits, not the old file's.
     CHECK(common::is_ok(common::write_file_atomically(path.c_str(), common::Span<const std::uint8_t>{}, 0x1A4U)));
     CHECK(contents_of(path).empty());
     CHECK(!has_temporary_files(directory));
 
+#if !defined(_WIN32)  // Symbolic links need a privilege or developer mode on Windows.
     // A symbolic link at the path is replaced, not followed.
     const std::string target{directory.entry("target")};
     const std::string link{directory.entry("link")};
@@ -170,16 +191,29 @@ TEST_CASE(whole_file_write_file_atomically) {
     CHECK(contents_of(link) == "replaced");
     struct stat info {};
     CHECK((::lstat(link.c_str(), &info) == 0) && S_ISREG(info.st_mode));
+#endif
 
     // A path in the root directory, and a bare file name (the current directory), sync the right
     // directory. The root is not writable here, so only the relative case can be completed.
-    std::array<char, 4096U> previous{};
-    REQUIRE(::getcwd(previous.data(), previous.size()) != nullptr);
-    REQUIRE(::chdir(directory.path().c_str()) == 0);
+    const std::string previous{test::current_directory()};
+    REQUIRE(!previous.empty());
+    REQUIRE(test::change_directory(directory.path()));
     const common::Status relative{common::write_file_atomically("relative", bytes_of("here"), 0x1A4U)};
-    REQUIRE(::chdir(previous.data()) == 0);
+    REQUIRE(test::change_directory(previous));
     CHECK(common::is_ok(relative));
     CHECK(contents_of(directory.entry("relative")) == "here");
+#if defined(_WIN32)
+    // A path with backslashes, as Windows programs write them.
+    std::string backslashed{directory.entry("windows")};
+    for (char& character : backslashed) {
+        character = (character == '/') ? '\\' : character;
+    }
+    CHECK(common::is_ok(common::write_file_atomically(backslashed.c_str(), bytes_of("native"), 0x1A4U)));
+    CHECK(contents_of(directory.entry("windows")) == "native");
+    CHECK(common::write_file_atomically((backslashed + "\\").c_str(), bytes_of("x"), 0x1A4U) ==
+          common::Status::kInvalidArgument);
+#endif
+    CHECK(!has_temporary_files(directory));
 }
 
 TEST_CASE(whole_file_write_file_atomically_errors) {
@@ -203,7 +237,7 @@ TEST_CASE(whole_file_write_file_atomically_errors) {
     // When the rename fails (the path is a non-empty directory), the temporary file is removed and
     // the path is left as it was.
     const std::string occupied{directory.entry("occupied")};
-    REQUIRE(::mkdir(occupied.c_str(), 0700) == 0);
+    REQUIRE(common::is_ok(common::create_directory(occupied.c_str(), 0x1C0U)));  // Octal 0700.
     REQUIRE(common::is_ok(common::write_file((occupied + "/inside").c_str(), bytes_of("keep"), 0x1A4U)));
     CHECK(!common::is_ok(common::write_file_atomically(occupied.c_str(), bytes_of("x"), 0x1A4U)));
     CHECK(contents_of(occupied + "/inside") == "keep");

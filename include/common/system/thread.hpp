@@ -4,7 +4,9 @@
 #ifndef COMMON_SYSTEM_THREAD_HPP
 #define COMMON_SYSTEM_THREAD_HPP
 
+#if !defined(_WIN32)
 #include <pthread.h>
+#endif
 
 #include <array>
 #include <bitset>
@@ -15,6 +17,11 @@
 
 namespace common {
 
+/// Scheduling policy of a thread.
+///
+/// Windows has no real-time policies: there, kOther is the normal thread priority, and kFifo and
+/// kRoundRobin are reported as kNotSupported (after their priority is checked as on Linux, so that
+/// a configuration is equally valid on both).
 enum class SchedPolicy : std::uint8_t {
     kOther,       ///< SCHED_OTHER (CFS); priority must be 0.
     kFifo,        ///< SCHED_FIFO; priority 1..99.
@@ -22,6 +29,9 @@ enum class SchedPolicy : std::uint8_t {
 };
 
 /// Set of logical CPUs. An empty set means "do not change affinity".
+///
+/// On Windows, the CPUs are numbered across the processor groups in order (the CPUs of group 0
+/// first), as current_cpu() reports them, and a thread can only run on the CPUs of one group.
 class CpuSet final {
 public:
     static constexpr std::size_t kMaxCpus{1024U};
@@ -51,10 +61,20 @@ struct ThreadConfig final {
 };
 
 /// Applies a policy and priority to the calling thread.
-/// SCHED_FIFO / SCHED_RR need CAP_SYS_NICE or an RLIMIT_RTPRIO grant (see README).
+/// SCHED_FIFO / SCHED_RR need CAP_SYS_NICE or an RLIMIT_RTPRIO grant (see README); on Windows they
+/// are kNotSupported, and kOther sets the normal thread priority.
 Status set_current_thread_scheduling(SchedPolicy policy, std::int32_t priority) noexcept;
+
+/// Reads the calling thread's policy and priority. On Windows, the policy is always kOther and the
+/// priority is the Windows thread priority, 0 (THREAD_PRIORITY_NORMAL) unless changed otherwise.
 Status get_current_thread_scheduling(SchedPolicy& policy, std::int32_t& priority) noexcept;
+
+/// Restricts the calling thread to @p cpus. @return kInvalidArgument for an empty set or one without
+/// an existing CPU; on Windows kNotSupported for CPUs in more than one processor group.
 Status set_current_thread_affinity(const CpuSet& cpus) noexcept;
+
+/// Sets the name of the calling thread, at most 15 characters (pthread_setname_np, or
+/// SetThreadDescription on Windows, where debuggers and profilers show it).
 Status set_current_thread_name(const char* name) noexcept;
 
 /// Applies name, affinity and scheduling (in that order) to the calling thread, e.g. main().
@@ -65,7 +85,8 @@ Status apply_to_current_thread(const ThreadConfig& config) noexcept;
 [[nodiscard]] std::int32_t current_cpu() noexcept;
 
 /// pthread wrapper that creates the thread with its scheduling attributes already applied
-/// (PTHREAD_EXPLICIT_SCHED), so it never runs with inherited, unintended parameters.
+/// (PTHREAD_EXPLICIT_SCHED), so it never runs with inherited, unintended parameters. On Windows the
+/// thread is created suspended and runs only after its affinity, priority and name are set.
 ///
 /// The entry point is a plain function pointer plus context: no std::function, no allocation
 /// by this class. Creating a thread is an initialisation-phase operation (the kernel and libc
@@ -96,9 +117,15 @@ public:
 private:
     static constexpr std::size_t kMaxNameLength{15U};
 
+#if defined(_WIN32)
+    static unsigned __stdcall trampoline(void* self) noexcept;
+
+    void* handle_{nullptr};  ///< The thread's HANDLE.
+#else
     static void* trampoline(void* self) noexcept;
 
     pthread_t handle_{};
+#endif
     Entry entry_{nullptr};
     void* context_{nullptr};
     std::array<char, kMaxNameLength + 1U> name_{};

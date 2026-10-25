@@ -5,8 +5,8 @@ project(common
     DESCRIPTION "Real-time C++17 foundation library"
     LANGUAGES CXX)
 
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "common targets Linux only (use WSL on Windows)")
+if(NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows"))
+    message(FATAL_ERROR "common targets Linux and Windows only")
 endif()
 
 set(COMMON_IS_TOP_LEVEL ${PROJECT_IS_TOP_LEVEL})
@@ -27,11 +27,19 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
+if(MSVC AND (NOT COMMON_ENABLE_EXCEPTIONS))
+    # CMake's default flags turn on exceptions and RTTI (/EHsc /GR). common::options turns both off;
+    # removing the defaults here, for this project's own targets, spares cl's warning D9025 about
+    # overriding them.
+    string(REGEX REPLACE "(^| )/(EHsc|GR)( |$)" " " CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+endif()
+
 include(cmake/CommonOptions.cmake)
 
 find_package(Threads REQUIRED)
 
-# Sources mirror the header groups in include/common/<group>/.
+# Sources mirror the header groups in include/common/<group>/. A component whose implementation is
+# mostly platform-specific has a <name>_posix.cpp and a <name>_win32.cpp next to its <name>.cpp.
 add_library(common
     src/core/assert.cpp
     src/diagnostics/logger.cpp
@@ -44,7 +52,19 @@ add_library(common
     src/system/memory.cpp
     src/system/thread.cpp
     src/time/clock.cpp)
+if(WIN32)
+    target_sources(common PRIVATE
+        src/detail/overlapped_io.cpp
+        src/file/serial_port_win32.cpp
+        src/system/thread_win32.cpp)
+else()
+    target_sources(common PRIVATE
+        src/file/serial_port_posix.cpp
+        src/system/thread_posix.cpp)
+endif()
 add_library(common::common ALIAS common)
+# A shared build (BUILD_SHARED_LIBS) exports every function on Windows too, as on Linux.
+set_target_properties(common PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 target_include_directories(common
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
