@@ -79,7 +79,7 @@ Status sleep_until(const TimePoint deadline) noexcept {
     }
     return status;
 }
-#else
+#elif COMMON_LINUX_API
 Status sleep_until(const TimePoint deadline) noexcept {
     const timespec ts{to_timespec(deadline)};
     Status status{Status::kInterrupted};
@@ -92,6 +92,27 @@ Status sleep_until(const TimePoint deadline) noexcept {
         }
         if (rc != EINTR) {
             status = (rc == EINVAL) ? Status::kInvalidArgument : Status::kSystemError;
+            break;
+        }
+    }
+    return status;
+}
+#else
+Status sleep_until(const TimePoint deadline) noexcept {
+    // Without clock_nanosleep() (macOS, iOS), each round sleeps for the time that is left, and a
+    // wake-up that MonotonicClock still sees before the deadline sleeps again: never early.
+    Status status{Status::kInterrupted};
+    for (std::uint32_t attempt{0U}; attempt < kMaxSleepRestarts; ++attempt) {
+        const Duration remaining{deadline - MonotonicClock::now()};
+        if (remaining <= Duration::zero()) {
+            status = Status::kOk;
+            break;
+        }
+        timespec ts{};
+        ts.tv_sec = remaining.count() / MonotonicClock::kNanosPerSecond;
+        ts.tv_nsec = remaining.count() % MonotonicClock::kNanosPerSecond;
+        if ((::nanosleep(&ts, nullptr) != 0) && (errno != EINTR)) {
+            status = (errno == EINVAL) ? Status::kInvalidArgument : Status::kSystemError;
             break;
         }
     }

@@ -6,7 +6,8 @@ real-time path, none of them allocate, block or throw, and every loop has a fixe
 
 It also builds and runs on Windows with MSVC, for tools, simulators and development, where the
 same code compiles on both platforms; see [Windows](#windows) for what differs there. And on
-Android (64-bit, API level 28 or later), for apps; see [Android](#android).
+Android (64-bit, API level 28 or later), macOS and iOS, for apps and tools; see [Android](#android)
+and [macOS and iOS](#macos-and-ios).
 
 ## Components
 
@@ -18,7 +19,7 @@ The last column says whether a component may be used on the real-time path.
 
 | Header | Purpose | RT-path safe |
 |---|---|---|
-| `core/config.hpp` | Platform checks (Linux, Android 9 or later, or Windows, C++17, no `-ffast-math` or `/fp:fast`), cache-line and page size, `NativeHandle` (a descriptor, or a Windows `HANDLE`) | yes |
+| `core/config.hpp` | Platform checks (Linux, Android 9 or later, macOS, iOS or Windows, C++17, no `-ffast-math` or `/fp:fast`), `COMMON_LINUX_API` (the calls of Linux beyond POSIX), cache-line and page size, `NativeHandle` (a descriptor, or a Windows `HANDLE`) | yes |
 | `core/status.hpp` | `Status` (`[[nodiscard]]` enum) and `Result<T>`, used instead of exceptions | yes |
 | `core/assert.hpp` | `COMMON_ASSERT`: never throws; calls a handler that must not allocate, then aborts | yes |
 
@@ -199,6 +200,21 @@ Both presets build for API level 28 (Android 9). `android-x86_64` links the exec
 statically, so the tests run on the Linux host itself, with Android's C library (bionic) and
 libc++, without an emulator. `adb push` them to a device to run them there.
 
+## Building (macOS and iOS)
+
+Requires the Xcode command line tools (Apple Clang), CMake 3.21 or later and Ninja; the iOS build
+needs Xcode itself.
+
+```bash
+cmake --preset macos-debug && cmake --build --preset macos-debug && ctest --preset macos-debug
+cmake --preset ios && cmake --build --preset ios   # the library for iOS 15 and later (arm64)
+```
+
+This support was written without a Mac. Where macOS and iOS lack calls of Linux, they take portable
+POSIX code, and the `portable` preset runs all the tests on Linux with exactly that code
+(`COMMON_PORTABLE_POSIX`, under AddressSanitizer and UndefinedBehaviorSanitizer). The few calls of
+Apple's own (see below) have only been reviewed, not compiled.
+
 ## Using it in a project
 
 ```cmake
@@ -263,6 +279,25 @@ bits. Android is Linux, so the Linux code applies, except:
 
 API level 28 is required because `pthread_attr_setinheritsched` came with it: without it, bionic
 lets a `kOther` thread inherit the policy of its creator.
+
+## macOS and iOS
+
+Every component is meant to build on macOS and iOS (64-bit), from the POSIX code. What Linux has
+beyond POSIX either has an equivalent or reports `Status::kNotSupported`:
+
+| Component | On macOS and iOS |
+|---|---|
+| `sleep_until`, `PeriodicTimer` | No `clock_nanosleep`: `nanosleep` for the time that is left, again until `MonotonicClock` reaches the deadline; never early |
+| `RtThread` and the current-thread functions | No CPU affinity (`kNotSupported`), and `current_cpu()` is -1; names through `pthread_setname_np(name)` |
+| `lock_process_memory`, `configure_allocator_for_rt` | `kNotSupported` (no `mlockall` or glibc malloc) |
+| `enable_fp_traps` | `kNotSupported` (no `feenableexcept`) |
+| `File::preallocate`, `sync`, `sync_data` | `F_PREALLOCATE` and `ftruncate`; `F_FULLFSYNC`, which flushes the drive's cache as `fsync` does on Linux (`fsync` where the file system lacks it) |
+| `MappedFile` | No `MAP_POPULATE`: population touches every page after mapping |
+| `SerialPort` | `poll` in place of `ppoll`; speeds up to 230400 bit/s, faster ones `kNotSupported`. iOS apps have no serial ports |
+
+`COMMON_LINUX_API` in `core/config.hpp` tells the code which calls it has: 1 on Linux and Android,
+0 on macOS and iOS, and 0 on Linux with `COMMON_PORTABLE_POSIX`, which is how the tests cover the
+portable code.
 
 ## Real-time privileges
 

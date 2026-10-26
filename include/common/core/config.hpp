@@ -8,8 +8,18 @@
 #include <cstdint>
 #include <type_traits>
 
-#if !defined(__linux__) && !defined(_WIN32)
-#error "common: only Linux (including Android) and Windows targets are supported"
+#if !defined(__linux__) && !defined(_WIN32) && !defined(__APPLE__)
+#error "common: only Linux (including Android), Windows, macOS and iOS targets are supported"
+#endif
+
+// COMMON_LINUX_API is 1 where the calls of Linux beyond POSIX are there (ppoll, clock_nanosleep,
+// MAP_POPULATE): Linux and Android. It is 0 on macOS and iOS, which use portable POSIX code in their
+// place, and on Linux built with COMMON_PORTABLE_POSIX, so that the tests cover that code there too.
+// Windows has code of its own.
+#if defined(__linux__) && !defined(COMMON_PORTABLE_POSIX)
+#define COMMON_LINUX_API 1
+#else
+#define COMMON_LINUX_API 0
 #endif
 
 // Android 9 brought pthread_attr_setinheritsched, without which RtThread could not keep a thread

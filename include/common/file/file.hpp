@@ -150,16 +150,18 @@ public:
 
     /// Reserves storage for the first @p length bytes (posix_fallocate; on Windows the allocation
     /// size), so later writes in that range do not have to allocate blocks and cannot fail for lack
-    /// of space. The file grows to @p length if it is shorter.
+    /// of space. The file grows to @p length if it is shorter. (posix_fallocate; on macOS and iOS
+    /// F_PREALLOCATE, then ftruncate.)
     /// @return kNotSupported if the file system cannot do it.
     Status preallocate(std::uint64_t length) noexcept;
 
     /// Waits until data and metadata are on stable storage (fsync; FlushFileBuffers on Windows,
-    /// which needs write access: kPermissionDenied for a read-only File).
+    /// which needs write access: kPermissionDenied for a read-only File; F_FULLFSYNC on macOS and
+    /// iOS, where fsync leaves the data in the drive's cache).
     Status sync() noexcept;
 
     /// Waits until the data (and the metadata needed to read it back) is on stable storage
-    /// (fdatasync); cheaper than sync(). On Windows the same as sync().
+    /// (fdatasync); cheaper than sync(). On Windows, macOS and iOS the same as sync().
     Status sync_data() noexcept;
 
 private:

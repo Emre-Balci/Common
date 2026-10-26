@@ -15,6 +15,12 @@
             "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
         },
         {
+            "name": "apple",
+            "hidden": true,
+            "inherits": "base",
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+        },
+        {
             "name": "msvc",
             "hidden": true,
             "inherits": "base",
@@ -63,6 +69,17 @@
             }
         },
         {
+            "name": "portable",
+            "inherits": "linux",
+            "description": "The portable POSIX code of macOS and iOS, tested on Linux",
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "COMMON_PORTABLE_POSIX": "ON",
+                "COMMON_SANITIZER": "address,undefined"
+            }
+        },
+        {
             "name": "tidy",
             "inherits": "linux",
             "cacheVariables": {
@@ -85,6 +102,27 @@
             "name": "msvc-asan",
             "inherits": "msvc",
             "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "COMMON_SANITIZER": "address" }
+        },
+        {
+            "name": "macos-debug",
+            "inherits": "apple",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+        },
+        {
+            "name": "macos-release",
+            "inherits": "apple",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+        },
+        {
+            "name": "ios",
+            "inherits": "apple",
+            "description": "iOS 15 and later on devices (arm64), with Xcode; the library only",
+            "generator": "Xcode",
+            "cacheVariables": {
+                "CMAKE_SYSTEM_NAME": "iOS",
+                "CMAKE_OSX_DEPLOYMENT_TARGET": "15.0",
+                "CMAKE_OSX_ARCHITECTURES": "arm64"
+            }
         },
         {
             "name": "android",
@@ -117,18 +155,27 @@
             "hidden": true,
             "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
         },
+        {
+            "name": "darwin",
+            "hidden": true,
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+        },
         { "name": "gcc-debug", "inherits": "linux", "configurePreset": "gcc-debug" },
         { "name": "gcc-release", "inherits": "linux", "configurePreset": "gcc-release" },
         { "name": "clang-debug", "inherits": "linux", "configurePreset": "clang-debug" },
         { "name": "clang-release", "inherits": "linux", "configurePreset": "clang-release" },
         { "name": "asan", "inherits": "linux", "configurePreset": "asan" },
         { "name": "tsan", "inherits": "linux", "configurePreset": "tsan" },
+        { "name": "portable", "inherits": "linux", "configurePreset": "portable" },
         { "name": "tidy", "inherits": "linux", "configurePreset": "tidy" },
         { "name": "msvc-debug", "inherits": "windows", "configurePreset": "msvc-debug" },
         { "name": "msvc-release", "inherits": "windows", "configurePreset": "msvc-release" },
         { "name": "msvc-asan", "inherits": "windows", "configurePreset": "msvc-asan" },
         { "name": "android-arm64", "inherits": "linux", "configurePreset": "android-arm64" },
-        { "name": "android-x86_64", "inherits": "linux", "configurePreset": "android-x86_64" }
+        { "name": "android-x86_64", "inherits": "linux", "configurePreset": "android-x86_64" },
+        { "name": "macos-debug", "inherits": "darwin", "configurePreset": "macos-debug" },
+        { "name": "macos-release", "inherits": "darwin", "configurePreset": "macos-release" },
+        { "name": "ios", "inherits": "darwin", "configurePreset": "ios", "configuration": "Release" }
     ],
     "testPresets": [
         { "name": "base", "hidden": true, "output": { "outputOnFailure": true } },
@@ -144,15 +191,24 @@
             "inherits": "base",
             "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
         },
+        {
+            "name": "darwin",
+            "hidden": true,
+            "inherits": "base",
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+        },
         { "name": "gcc-debug", "inherits": "linux", "configurePreset": "gcc-debug" },
         { "name": "gcc-release", "inherits": "linux", "configurePreset": "gcc-release" },
         { "name": "clang-debug", "inherits": "linux", "configurePreset": "clang-debug" },
         { "name": "clang-release", "inherits": "linux", "configurePreset": "clang-release" },
         { "name": "asan", "inherits": "linux", "configurePreset": "asan" },
         { "name": "tsan", "inherits": "linux", "configurePreset": "tsan" },
+        { "name": "portable", "inherits": "linux", "configurePreset": "portable" },
         { "name": "msvc-debug", "inherits": "windows", "configurePreset": "msvc-debug" },
         { "name": "msvc-release", "inherits": "windows", "configurePreset": "msvc-release" },
         { "name": "msvc-asan", "inherits": "windows", "configurePreset": "msvc-asan" },
-        { "name": "android-x86_64", "inherits": "linux", "configurePreset": "android-x86_64" }
+        { "name": "android-x86_64", "inherits": "linux", "configurePreset": "android-x86_64" },
+        { "name": "macos-debug", "inherits": "darwin", "configurePreset": "macos-debug" },
+        { "name": "macos-release", "inherits": "darwin", "configurePreset": "macos-release" }
     ]
 }

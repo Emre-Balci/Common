@@ -20,7 +20,8 @@ namespace common {
 static_assert(sizeof(time_t) == 8U, "a 64-bit time_t is required (y2038-safe)");
 #endif
 
-/// std::chrono clock backed by CLOCK_MONOTONIC (Linux) or the performance counter (Windows).
+/// std::chrono clock backed by CLOCK_MONOTONIC (Linux, Android, macOS, iOS) or the performance
+/// counter (Windows).
 ///
 /// CLOCK_MONOTONIC never jumps (unlike CLOCK_REALTIME) and is the clock clock_nanosleep()
 /// accepts for absolute deadlines. It may be slewed by NTP at a bounded rate.
@@ -70,7 +71,8 @@ using TimePoint = MonotonicClock::time_point;
 ///
 /// On Windows, the calling thread waits on its own high-resolution waitable timer, created on its
 /// first call (so make that call during initialisation), and re-arms it until MonotonicClock has
-/// reached the deadline: it never returns early.
+/// reached the deadline: it never returns early. macOS and iOS have no clock_nanosleep(): there it
+/// sleeps (nanosleep()) for the time that is left until MonotonicClock reaches the deadline.
 /// @return kOk, kInterrupted if repeatedly interrupted by signals, or kInvalidArgument;
 ///         kResourceLimit or kSystemError on Windows if the timer cannot be created or armed.
 Status sleep_until(TimePoint deadline) noexcept;

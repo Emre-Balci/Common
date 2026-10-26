@@ -14,7 +14,9 @@
 namespace common {
 namespace {
 
+#if !defined(__APPLE__)
 static_assert(CpuSet::kMaxCpus <= static_cast<std::size_t>(CPU_SETSIZE), "CpuSet exceeds cpu_set_t");
+#endif
 
 int to_native(const SchedPolicy policy) noexcept {
     int native{SCHED_OTHER};
@@ -39,6 +41,7 @@ Status validate_priority(const SchedPolicy policy, const std::int32_t priority) 
     return ((priority >= min) && (priority <= max)) ? Status::kOk : Status::kInvalidArgument;
 }
 
+#if !defined(__APPLE__)
 void to_native(const CpuSet& cpus, cpu_set_t& native) noexcept {
     CPU_ZERO(&native);
     for (std::size_t cpu{0U}; cpu < CpuSet::kMaxCpus; ++cpu) {
@@ -46,6 +49,16 @@ void to_native(const CpuSet& cpus, cpu_set_t& native) noexcept {
             CPU_SET(cpu, &native);
         }
     }
+}
+#endif
+
+/// Names the calling thread; @p name has at most 15 characters.
+int set_own_name(const char* const name) noexcept {
+#if defined(__APPLE__)
+    return ::pthread_setname_np(name);  // macOS and iOS name the calling thread only.
+#else
+    return ::pthread_setname_np(::pthread_self(), name);
+#endif
 }
 
 /// RAII owner of pthread_attr_t.
@@ -106,13 +119,17 @@ Status get_current_thread_scheduling(SchedPolicy& policy, std::int32_t& priority
 Status set_current_thread_affinity(const CpuSet& cpus) noexcept {
     Status status{Status::kInvalidArgument};
     if (!cpus.empty()) {
+#if defined(__APPLE__)
+        status = Status::kNotSupported;  // macOS and iOS do not bind threads to CPUs.
+#elif defined(__ANDROID__)
         cpu_set_t native{};
         to_native(cpus, native);
-#if defined(__ANDROID__)
         // Bionic has no pthread_setaffinity_np: the thread's own ID selects it.
         status = (::sched_setaffinity(::gettid(), sizeof(native), &native) == 0) ? Status::kOk
                                                                                  : detail::status_from_errno(errno);
 #else
+        cpu_set_t native{};
+        to_native(cpus, native);
         status = detail::status_from_errno(::pthread_setaffinity_np(::pthread_self(), sizeof(native), &native));
 #endif
     }
@@ -122,13 +139,17 @@ Status set_current_thread_affinity(const CpuSet& cpus) noexcept {
 Status set_current_thread_name(const char* const name) noexcept {
     Status status{Status::kInvalidArgument};
     if ((name != nullptr) && (std::strlen(name) <= 15U)) {
-        status = detail::status_from_errno(::pthread_setname_np(::pthread_self(), name));
+        status = detail::status_from_errno(set_own_name(name));
     }
     return status;
 }
 
 std::int32_t current_cpu() noexcept {
+#if defined(__APPLE__)
+    return -1;  // macOS and iOS do not tell.
+#else
     return ::sched_getcpu();
+#endif
 }
 
 Status RtThread::start(const ThreadConfig& config, const Entry entry, void* const context) noexcept {
@@ -172,8 +193,9 @@ Status RtThread::start(const ThreadConfig& config, const Entry entry, void* cons
     if ((rc == 0) && (config.stack_size != 0U)) {
         rc = ::pthread_attr_setstacksize(attr, config.stack_size);
     }
-#if defined(__ANDROID__)
-    // Bionic cannot create a thread with an affinity (no pthread_attr_setaffinity_np).
+#if defined(__ANDROID__) || defined(__APPLE__)
+    // Bionic cannot create a thread with an affinity (no pthread_attr_setaffinity_np), and macOS and
+    // iOS do not bind threads to CPUs at all.
     if ((rc == 0) && (!config.affinity.empty())) {
         return Status::kNotSupported;
     }
@@ -208,7 +230,7 @@ Status RtThread::join() noexcept {
 void* RtThread::trampoline(void* const self) noexcept {
     const RtThread* const thread{static_cast<const RtThread*>(self)};
     if (thread->name_[0U] != '\0') {
-        static_cast<void>(::pthread_setname_np(::pthread_self(), thread->name_.data()));
+        static_cast<void>(set_own_name(thread->name_.data()));
     }
     thread->entry_(thread->context_);
     return nullptr;

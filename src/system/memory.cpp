@@ -20,6 +20,9 @@ Status lock_process_memory() noexcept {
 #if defined(_WIN32)
     // Windows can only lock given address ranges (VirtualLock), up to the working-set minimum.
     return Status::kNotSupported;
+#elif defined(__APPLE__)
+    // macOS and iOS declare mlockall() but do not implement it; mlock() locks given ranges.
+    return Status::kNotSupported;
 #else
     Status status{Status::kOk};
     if (::mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {

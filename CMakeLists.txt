@@ -6,8 +6,9 @@ project(common
     LANGUAGES CXX)
 
 if(NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows" OR
-        CMAKE_SYSTEM_NAME STREQUAL "Android"))
-    message(FATAL_ERROR "common targets Linux, Windows and Android only")
+        CMAKE_SYSTEM_NAME STREQUAL "Android" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR
+        CMAKE_SYSTEM_NAME STREQUAL "iOS"))
+    message(FATAL_ERROR "common targets Linux, Windows, Android, macOS and iOS only")
 endif()
 # On Android, a 64-bit ABI (arm64-v8a, x86_64): the 32-bit ones have a 32-bit time_t and off_t.
 # core/config.hpp checks the API level.
@@ -16,13 +17,22 @@ if(ANDROID AND NOT (CMAKE_SIZEOF_VOID_P EQUAL 8))
 endif()
 
 set(COMMON_IS_TOP_LEVEL ${PROJECT_IS_TOP_LEVEL})
+# An iOS app is a bundle: the test and example programs are for the other systems.
+if(IOS)
+    set(COMMON_PROGRAMS_DEFAULT OFF)
+else()
+    set(COMMON_PROGRAMS_DEFAULT ${COMMON_IS_TOP_LEVEL})
+endif()
 
-option(COMMON_BUILD_TESTS "Build unit tests" ${COMMON_IS_TOP_LEVEL})
-option(COMMON_BUILD_EXAMPLES "Build examples" ${COMMON_IS_TOP_LEVEL})
+option(COMMON_BUILD_TESTS "Build unit tests" ${COMMON_PROGRAMS_DEFAULT})
+option(COMMON_BUILD_EXAMPLES "Build examples" ${COMMON_PROGRAMS_DEFAULT})
 option(COMMON_WARNINGS_AS_ERRORS "Treat warnings as errors" ${COMMON_IS_TOP_LEVEL})
 option(COMMON_ENABLE_EXCEPTIONS "Compile with exceptions and RTTI" OFF)
 option(COMMON_ENABLE_CLANG_TIDY "Run clang-tidy during the build" OFF)
 set(COMMON_SANITIZER "" CACHE STRING "Sanitizers to enable, e.g. address,undefined or thread")
+# macOS and iOS lack calls of Linux beyond POSIX and use portable POSIX code in their place. This
+# option uses that code on Linux too, so that the tests cover it where they run (see config.hpp).
+option(COMMON_PORTABLE_POSIX "Use the portable POSIX code of macOS and iOS on Linux too" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -76,6 +86,9 @@ target_include_directories(common
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(common PUBLIC cxx_std_17)
+if(COMMON_PORTABLE_POSIX)
+    target_compile_definitions(common PUBLIC COMMON_PORTABLE_POSIX)
+endif()
 target_link_libraries(common
     PUBLIC Threads::Threads
     PRIVATE common::options)

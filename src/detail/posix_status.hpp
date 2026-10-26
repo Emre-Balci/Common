@@ -49,6 +49,9 @@ namespace detail {
             break;
         case ENOSYS:
         case ENOTSUP:  // Same value as EOPNOTSUPP on Linux.
+#if EOPNOTSUPP != ENOTSUP
+        case EOPNOTSUPP:  // A value of its own on macOS and iOS.
+#endif
             status = Status::kNotSupported;
             break;
         case EINTR:

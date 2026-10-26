@@ -56,7 +56,8 @@ struct ThreadConfig final {
     std::int32_t priority{50};
     /// CPUs the thread may run on; empty keeps the inherited affinity. On Android, RtThread::start()
     /// reports kNotSupported for a non-empty set (bionic cannot create a thread with an affinity):
-    /// the thread calls set_current_thread_affinity() itself.
+    /// the thread calls set_current_thread_affinity() itself. macOS and iOS have no affinity:
+    /// kNotSupported there, too.
     CpuSet affinity{};
     /// Stack size in bytes; 0 uses the system default.
     std::size_t stack_size{0U};
@@ -72,7 +73,8 @@ Status set_current_thread_scheduling(SchedPolicy policy, std::int32_t priority) 
 Status get_current_thread_scheduling(SchedPolicy& policy, std::int32_t& priority) noexcept;
 
 /// Restricts the calling thread to @p cpus. @return kInvalidArgument for an empty set or one without
-/// an existing CPU; on Windows kNotSupported for CPUs in more than one processor group.
+/// an existing CPU; on Windows kNotSupported for CPUs in more than one processor group; on macOS and
+/// iOS, which do not bind threads to CPUs, kNotSupported.
 Status set_current_thread_affinity(const CpuSet& cpus) noexcept;
 
 /// Sets the name of the calling thread, at most 15 characters (pthread_setname_np, or
@@ -83,7 +85,7 @@ Status set_current_thread_name(const char* name) noexcept;
 /// Stops at, and returns, the first error. stack_size is ignored.
 Status apply_to_current_thread(const ThreadConfig& config) noexcept;
 
-/// @return the CPU the caller is running on, or -1 on error.
+/// @return the CPU the caller is running on, or -1 on error (always on macOS and iOS).
 [[nodiscard]] std::int32_t current_cpu() noexcept;
 
 /// pthread wrapper that creates the thread with its scheduling attributes already applied
