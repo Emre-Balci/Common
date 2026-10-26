@@ -38,7 +38,7 @@ std::string contents_of(const std::string& path) {
 /// Permission bits of @p path, or 0xFFFFFFFF.
 std::uint32_t permissions_of(const std::string& path) {
     struct stat info {};
-    return (::lstat(path.c_str(), &info) == 0) ? (static_cast<std::uint32_t>(info.st_mode) & 0xFFFU) : 0xFFFFFFFFU;
+    return (::lstat(path.c_str(), &info) == 0) ? (std::uint32_t{info.st_mode} & 0xFFFU) : 0xFFFFFFFFU;
 }
 
 /// The permission bits a file created with @p requested gets under the current umask.
