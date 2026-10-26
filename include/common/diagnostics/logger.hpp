@@ -302,6 +302,19 @@ private:
 
 static_assert(std::is_trivially_copyable<LogArgument>::value, "LogArgument must be trivially copyable");
 
+namespace detail {
+namespace logger {
+
+/// The default arguments of a LogRecord. MSVC 19.32 takes std::array<LogArgument, N>{} as potentially
+/// throwing, although LogArgument() is noexcept; calling it through this noexcept function keeps
+/// LogRecord nothrow default-constructible there, as SpscQueue requires.
+[[nodiscard]] constexpr std::array<LogArgument, kMaxLogArguments> no_arguments() noexcept {
+    return std::array<LogArgument, kMaxLogArguments>{};
+}
+
+}  // namespace logger
+}  // namespace detail
+
 /// One log call as it travels from the producing thread to the draining thread: fixed size
 /// (168 bytes on x86-64 and AArch64) and trivially copyable.
 ///
@@ -315,7 +328,7 @@ struct LogRecord final {
     const char* format{nullptr};  ///< Static storage duration; nullptr prints an empty message.
     LogLevel level{LogLevel::kDebug};
     std::uint8_t argument_count{0U};  ///< Number of valid entries in arguments, <= kMaxLogArguments.
-    std::array<LogArgument, kMaxLogArguments> arguments{};
+    std::array<LogArgument, kMaxLogArguments> arguments{detail::logger::no_arguments()};
 };
 
 static_assert(std::is_trivially_copyable<LogRecord>::value, "LogRecord must be trivially copyable");

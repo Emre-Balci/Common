@@ -56,6 +56,8 @@
 /// - A file cannot be truncated while it is mapped: the truncation fails, rather than accesses to the
 ///   pages beyond the end raising SIGBUS. An I/O error while a page is read in raises the structured
 ///   exception EXCEPTION_IN_PAGE_ERROR instead of SIGBUS.
+/// - The file can be removed while it is mapped only where remove_file() has POSIX semantics (NTFS);
+///   elsewhere (e.g. FAT) the removal fails until the mapping is gone.
 /// - A kReadWrite mapping keeps a handle to its file (shared like any File) for sync().
 ///
 /// macOS and iOS have no MAP_POPULATE: there population touches every page after mapping, as on
