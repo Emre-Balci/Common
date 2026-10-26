@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 
 project(common
     VERSION 0.1.0
-    DESCRIPTION "Real-time C++17 foundation library"
+    DESCRIPTION "Real-time C++17 foundation library and application patterns"
     LANGUAGES CXX)
 
 if(NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows" OR
@@ -54,9 +54,19 @@ include(cmake/CommonOptions.cmake)
 
 find_package(Threads REQUIRED)
 
+# The project builds two libraries, whose headers share the include root include/common/:
+# - common-base (common::base): the real-time foundation, groups core, numeric, containers,
+#   concurrency, time, system, diagnostics, control, protocol and file;
+# - common (common::common): patterns for building larger applications on top of it, groups
+#   functional, object, event, state, task and app. It links common-base, so common::common gives
+#   both.
+# common-base builds on its own: none of its files includes a header of a group of common
+# (tests/check_layering.cmake checks this).
+set(COMMON_GROUPS functional object event state task app)
+
 # Sources mirror the header groups in include/common/<group>/. A component whose implementation is
 # mostly platform-specific has a <name>_posix.cpp and a <name>_win32.cpp next to its <name>.cpp.
-add_library(common
+add_library(common-base
     src/core/assert.cpp
     src/diagnostics/logger.cpp
     src/file/file.cpp
@@ -69,28 +79,41 @@ add_library(common
     src/system/thread.cpp
     src/time/clock.cpp)
 if(WIN32)
-    target_sources(common PRIVATE
+    target_sources(common-base PRIVATE
         src/detail/overlapped_io.cpp
         src/file/serial_port_win32.cpp
         src/system/thread_win32.cpp)
 else()
-    target_sources(common PRIVATE
+    target_sources(common-base PRIVATE
         src/file/serial_port_posix.cpp
         src/system/thread_posix.cpp)
 endif()
-add_library(common::common ALIAS common)
+add_library(common::base ALIAS common-base)
 # A shared build (BUILD_SHARED_LIBS) exports every function on Windows too, as on Linux.
-set_target_properties(common PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+set_target_properties(common-base PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
-target_include_directories(common
+target_include_directories(common-base
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_compile_features(common PUBLIC cxx_std_17)
+target_compile_features(common-base PUBLIC cxx_std_17)
 if(COMMON_PORTABLE_POSIX)
-    target_compile_definitions(common PUBLIC COMMON_PORTABLE_POSIX)
+    target_compile_definitions(common-base PUBLIC COMMON_PORTABLE_POSIX)
 endif()
-target_link_libraries(common
+target_link_libraries(common-base
     PUBLIC Threads::Threads
+    PRIVATE common::options)
+
+add_library(common
+    src/app/unit.cpp
+    src/app/unit_manager.cpp
+    src/task/task.cpp
+    src/task/task_executor.cpp
+    src/task/task_scheduler.cpp)
+add_library(common::common ALIAS common)
+set_target_properties(common PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+# The include root, the language standard and the threads library come from common-base.
+target_link_libraries(common
+    PUBLIC common::base
     PRIVATE common::options)
 
 if(COMMON_BUILD_TESTS)

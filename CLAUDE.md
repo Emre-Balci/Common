@@ -5,11 +5,20 @@ A C++17 real-time foundation library for Linux that also builds and runs on Wind
 README.md for the components and the rules.
 
 ## Layout
-Headers are grouped by purpose in `include/common/<group>/`: `core`, `numeric`, `containers`,
-`concurrency`, `time`, `system`, `diagnostics`, `control`, `protocol`, `file`. Sources mirror them in
-`src/<group>/` (internal helpers in `src/detail/`), tests in `tests/<group>/`. A new component goes
-in the matching group and is added to `CMakeLists.txt`, `tests/CMakeLists.txt`,
-`include/common/common.hpp` and the README tables.
+The project builds two libraries whose headers share the include root, grouped by purpose in
+`include/common/<group>/`:
+- `common-base` (`common::base`), the real-time foundation: `core`, `numeric`, `containers`,
+  `concurrency`, `time`, `system`, `diagnostics`, `control`, `protocol`, `file`;
+- `common` (`common::common`), patterns for building applications on it: `functional`, `object`,
+  `event`, `state`, `task`, `app`. It links `common-base` publicly.
+
+Sources mirror the groups in `src/<group>/` (internal helpers of `common-base` in `src/detail/`),
+tests in `tests/<group>/`. A new component goes in the matching group and is added to its library in
+`CMakeLists.txt`, to its test program in `tests/CMakeLists.txt` (`common_base_tests` or
+`common_tests`), to its umbrella header (`include/common/base.hpp` or `include/common/common.hpp`)
+and to the README tables. A new group of `common` also goes into `COMMON_GROUPS` in
+`CMakeLists.txt`. `common-base` never includes a header of `common`: the `common_base_layering` test
+fails if one of its files does.
 
 ## Platforms
 Platform code sits in `#if defined(_WIN32)` / `#else` blocks next to the POSIX code, so both stay

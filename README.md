@@ -4,15 +4,26 @@ A C++17 foundation library for real-time applications on Linux, such as automoti
 loops and trading systems. It provides the pieces a real-time program needs. On the
 real-time path, none of them allocate, block or throw, and every loop has a fixed upper bound.
 
+It is built as two libraries:
+
+| Library | CMake target | What it holds |
+|---|---|---|
+| `common-base` | `common::base` | The real-time foundation: error handling, arithmetic, containers, lock-free queues, time, threads, diagnostics, control, protocols and files ([components](#common-base-components)) |
+| `common` | `common::common` | Patterns for building larger applications on that foundation: lifecycle units, tasks with a scheduler and an executor, active objects, signals, state machines, object types and heap-free callables ([components](#common-components)). It links `common-base`, so `common::common` gives both |
+
+`common-base` builds on its own: none of its files includes a header of `common`, which a test
+checks.
+
 It also builds and runs on Windows with MSVC, for tools, simulators and development, where the
 same code compiles on both platforms; see [Windows](#windows) for what differs there. And on
 Android (64-bit, API level 28 or later), macOS and iOS, for apps and tools; see [Android](#android)
 and [macOS and iOS](#macos-and-ios).
 
-## Components
+## common-base components
 
-Headers are grouped by purpose in `include/common/<group>/`, and `#include "common/common.hpp"`
-pulls in everything. Sources and tests mirror the groups in `src/<group>/` and `tests/<group>/`.
+Headers are grouped by purpose in `include/common/<group>/`. `#include "common/base.hpp"` pulls in
+every header of `common-base`, and `#include "common/common.hpp"` those of both libraries. Sources
+and tests mirror the groups in `src/<group>/` and `tests/<group>/`.
 The last column says whether a component may be used on the real-time path.
 
 ### core: foundations every other header builds on
@@ -162,6 +173,11 @@ ctest --preset gcc-debug
 ./build/gcc-debug/examples/rt_periodic_loop 1 2000   # [cpu] [cycles]
 ```
 
+`ctest` runs `common_base_tests` (the tests of `common-base`, linked with it alone), `common_tests`
+(the tests of `common`) and `common_base_layering`, the check that `common-base` includes no header
+of `common`. A test program also runs on its own, optionally with a substring of test names, e.g.
+`./build/gcc-debug/tests/common_tests signal`.
+
 Always run the `tsan` and `asan` presets after changing anything concurrent. The `tidy` preset
 needs `sudo apt install clang-tidy`.
 
@@ -228,6 +244,11 @@ FetchContent_MakeAvailable(common)
 
 target_link_libraries(my_app PRIVATE common::common common::options)
 ```
+
+`common::common` brings `common-base` with it. A program that only needs the real-time foundation
+links `common::base` instead (the target itself is `common-base`). The libraries are
+`libcommon-base.a` and `libcommon.a` (`common-base.lib` and `common.lib` on Windows); outside CMake,
+link both, `common` first.
 
 `common::options` applies the same warnings, `-Werror` (when building this project at top level),
 `-ffp-contract=off` and `-fno-exceptions -fno-rtti` to your target. Leave it out if you need

@@ -18,7 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "common/common.hpp"
+#include "common/base.hpp"
 
 namespace {
 
