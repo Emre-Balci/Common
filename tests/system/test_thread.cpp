@@ -75,6 +75,12 @@ TEST_CASE(rt_thread_normal_policy_with_affinity) {
     config.stack_size = 256U * 1024U;
 
     common::RtThread thread{};
+#if defined(__ANDROID__)
+    // Bionic cannot create a thread with an affinity; the thread sets its own instead.
+    CHECK(thread.start(config, &probe_entry, &probe) == common::Status::kNotSupported);
+    CHECK(!thread.joinable());
+    config.affinity = common::CpuSet{};
+#endif
     REQUIRE(common::is_ok(thread.start(config, &probe_entry, &probe)));
     CHECK(thread.joinable());
     CHECK(thread.start(config, &probe_entry, &probe) == common::Status::kAlreadyRunning);
@@ -83,7 +89,9 @@ TEST_CASE(rt_thread_normal_policy_with_affinity) {
     CHECK(thread.join() == common::Status::kNotRunning);
 
     CHECK(probe.ran.load());
+#if !defined(__ANDROID__)
     CHECK(probe.cpu.load() == 0);
+#endif
     CHECK(probe.policy == common::SchedPolicy::kOther);
     CHECK(std::strcmp(probe.name.data(), "probe") == 0);
 }

@@ -1,7 +1,8 @@
 # common — notes for Claude
 
-A C++17 real-time foundation library for Linux that also builds and runs on Windows (MSVC). It is
-the base for automotive and trading projects. See README.md for the components and the rules.
+A C++17 real-time foundation library for Linux that also builds and runs on Windows (MSVC) and
+Android (64-bit, API level 28+). It is the base for automotive and trading projects. See README.md
+for the components and the rules.
 
 ## Layout
 Headers are grouped by purpose in `include/common/<group>/`: `core`, `numeric`, `containers`,
@@ -18,6 +19,10 @@ Windows helpers live in `src/detail/` (`win32.hpp`: `<windows.h>` and UTF-8 path
 `win32_status.hpp`: error mapping that matches `posix_status.hpp`; `overlapped_io`). Public headers
 never include `<windows.h>`; OS handles appear as `NativeHandle`. Keep the Linux behaviour
 unchanged when adding Windows code, and document every Windows difference in the header.
+
+Android is Linux with bionic in place of glibc, so it takes the POSIX code; where bionic lacks a call
+(`pthread_setaffinity_np`, `feenableexcept`), an `#if defined(__ANDROID__)` block (or a check for
+`__GLIBC__`) says what it does instead, and the header and the README's Android table say so too.
 
 ## Non-negotiable rules for library code (`include/`, `src/`)
 - No heap allocation on the RT path: no `new`, `std::vector`, `std::string`, `std::function`
@@ -53,3 +58,7 @@ put the commands in a `.bat` file that first calls `vcvars64.bat` of Visual Stud
 with `vswhere.exe -latest -property installationPath`, under `VC\Auxiliary\Build`), then run it
 with `cmd.exe /c` from the repository on a `/mnt/<drive>` path. `msvc-release` matters: MSVC 19.40
 has miscompiled code at `/O2` that passed in Debug.
+
+For Android, set `ANDROID_NDK_HOME` and build `android-arm64` and `android-x86_64` (also
+warning-free), and run `ctest --preset android-x86_64`: its executables are static, so the tests run
+on the Linux host with bionic.

@@ -2,7 +2,11 @@
 
 #include <pthread.h>
 #include <sched.h>
+#if defined(__ANDROID__)
+#include <unistd.h>  // gettid
+#endif
 
+#include <cerrno>
 #include <cstring>
 
 #include "detail/posix_status.hpp"
@@ -104,7 +108,13 @@ Status set_current_thread_affinity(const CpuSet& cpus) noexcept {
     if (!cpus.empty()) {
         cpu_set_t native{};
         to_native(cpus, native);
+#if defined(__ANDROID__)
+        // Bionic has no pthread_setaffinity_np: the thread's own ID selects it.
+        status = (::sched_setaffinity(::gettid(), sizeof(native), &native) == 0) ? Status::kOk
+                                                                                 : detail::status_from_errno(errno);
+#else
         status = detail::status_from_errno(::pthread_setaffinity_np(::pthread_self(), sizeof(native), &native));
+#endif
     }
     return status;
 }
@@ -162,11 +172,18 @@ Status RtThread::start(const ThreadConfig& config, const Entry entry, void* cons
     if ((rc == 0) && (config.stack_size != 0U)) {
         rc = ::pthread_attr_setstacksize(attr, config.stack_size);
     }
+#if defined(__ANDROID__)
+    // Bionic cannot create a thread with an affinity (no pthread_attr_setaffinity_np).
+    if ((rc == 0) && (!config.affinity.empty())) {
+        return Status::kNotSupported;
+    }
+#else
     if ((rc == 0) && (!config.affinity.empty())) {
         cpu_set_t cpus{};
         to_native(config.affinity, cpus);
         rc = ::pthread_attr_setaffinity_np(attr, sizeof(cpus), &cpus);
     }
+#endif
     if (rc != 0) {
         return detail::status_from_errno(rc);
     }

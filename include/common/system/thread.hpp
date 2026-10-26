@@ -54,7 +54,9 @@ struct ThreadConfig final {
     const char* name{nullptr};
     SchedPolicy policy{SchedPolicy::kFifo};
     std::int32_t priority{50};
-    /// CPUs the thread may run on; empty keeps the inherited affinity.
+    /// CPUs the thread may run on; empty keeps the inherited affinity. On Android, RtThread::start()
+    /// reports kNotSupported for a non-empty set (bionic cannot create a thread with an affinity):
+    /// the thread calls set_current_thread_affinity() itself.
     CpuSet affinity{};
     /// Stack size in bytes; 0 uses the system default.
     std::size_t stack_size{0U};

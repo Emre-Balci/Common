@@ -5,8 +5,14 @@ project(common
     DESCRIPTION "Real-time C++17 foundation library"
     LANGUAGES CXX)
 
-if(NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows"))
-    message(FATAL_ERROR "common targets Linux and Windows only")
+if(NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Windows" OR
+        CMAKE_SYSTEM_NAME STREQUAL "Android"))
+    message(FATAL_ERROR "common targets Linux, Windows and Android only")
+endif()
+# On Android, a 64-bit ABI (arm64-v8a, x86_64): the 32-bit ones have a 32-bit time_t and off_t.
+# core/config.hpp checks the API level.
+if(ANDROID AND NOT (CMAKE_SIZEOF_VOID_P EQUAL 8))
+    message(FATAL_ERROR "common needs a 64-bit Android ABI (arm64-v8a or x86_64), not ${CMAKE_ANDROID_ARCH_ABI}")
 endif()
 
 set(COMMON_IS_TOP_LEVEL ${PROJECT_IS_TOP_LEVEL})

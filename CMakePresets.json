@@ -85,6 +85,25 @@
             "name": "msvc-asan",
             "inherits": "msvc",
             "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "COMMON_SANITIZER": "address" }
+        },
+        {
+            "name": "android",
+            "hidden": true,
+            "inherits": "linux",
+            "description": "Android NDK (ANDROID_NDK_HOME), API level 28",
+            "toolchainFile": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake",
+            "cacheVariables": { "ANDROID_PLATFORM": "android-28", "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+        },
+        {
+            "name": "android-arm64",
+            "inherits": "android",
+            "cacheVariables": { "ANDROID_ABI": "arm64-v8a" }
+        },
+        {
+            "name": "android-x86_64",
+            "inherits": "android",
+            "description": "Static executables, so that the tests run on the Linux host",
+            "cacheVariables": { "ANDROID_ABI": "x86_64", "CMAKE_EXE_LINKER_FLAGS": "-static" }
         }
     ],
     "buildPresets": [
@@ -107,7 +126,9 @@
         { "name": "tidy", "inherits": "linux", "configurePreset": "tidy" },
         { "name": "msvc-debug", "inherits": "windows", "configurePreset": "msvc-debug" },
         { "name": "msvc-release", "inherits": "windows", "configurePreset": "msvc-release" },
-        { "name": "msvc-asan", "inherits": "windows", "configurePreset": "msvc-asan" }
+        { "name": "msvc-asan", "inherits": "windows", "configurePreset": "msvc-asan" },
+        { "name": "android-arm64", "inherits": "linux", "configurePreset": "android-arm64" },
+        { "name": "android-x86_64", "inherits": "linux", "configurePreset": "android-x86_64" }
     ],
     "testPresets": [
         { "name": "base", "hidden": true, "output": { "outputOnFailure": true } },
@@ -131,6 +152,7 @@
         { "name": "tsan", "inherits": "linux", "configurePreset": "tsan" },
         { "name": "msvc-debug", "inherits": "windows", "configurePreset": "msvc-debug" },
         { "name": "msvc-release", "inherits": "windows", "configurePreset": "msvc-release" },
-        { "name": "msvc-asan", "inherits": "windows", "configurePreset": "msvc-asan" }
+        { "name": "msvc-asan", "inherits": "windows", "configurePreset": "msvc-asan" },
+        { "name": "android-x86_64", "inherits": "linux", "configurePreset": "android-x86_64" }
     ]
 }

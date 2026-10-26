@@ -9,7 +9,16 @@
 #include <type_traits>
 
 #if !defined(__linux__) && !defined(_WIN32)
-#error "common: only Linux and Windows targets are supported"
+#error "common: only Linux (including Android) and Windows targets are supported"
+#endif
+
+// Android 9 brought pthread_attr_setinheritsched, without which RtThread could not keep a thread
+// from inheriting the policy of its creator.
+#if defined(__ANDROID__)
+#include <android/api-level.h>
+#if (__ANDROID_API__ < 28)
+#error "common: Android API level 28 (Android 9) or later is required"
+#endif
 #endif
 
 // MSVC reports __cplusplus as 199711L unless /Zc:__cplusplus is given; _MSVC_LANG always holds the

@@ -37,7 +37,7 @@ void write_fpcr(const std::uint64_t value) noexcept {
 // Exception mask bits of the floating-point control word; a set bit disables the trap.
 constexpr unsigned int kTrapMask{static_cast<unsigned int>(_EM_INVALID) | static_cast<unsigned int>(_EM_ZERODIVIDE) |
                                  static_cast<unsigned int>(_EM_OVERFLOW)};
-#else
+#elif defined(__GLIBC__)
 constexpr int kTrapMask{FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW};
 #endif
 
