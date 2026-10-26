@@ -240,3 +240,33 @@ TEST_CASE(file_system_operations) {
     CHECK(common::remove_file(nullptr) == common::Status::kInvalidArgument);
     CHECK(common::file_exists(nullptr).status() == common::Status::kInvalidArgument);
 }
+
+// As with unlink(2), the name goes at once while the file is open (on Windows where remove_file has
+// POSIX semantics, as on NTFS), and the open File keeps the old file.
+TEST_CASE(file_remove_while_open) {
+    TempDirectory directory{};
+    REQUIRE(directory.valid());
+    const std::string path{directory.entry("open")};
+    const common::FileOptions create{options(common::FileAccess::kReadWrite, common::FileCreation::kCreateNew)};
+    common::File old_file{};
+    REQUIRE(common::is_ok(old_file.open(path.c_str(), create)));
+    CHECK(common::is_ok(old_file.write_all(bytes_of("old contents"))));
+
+    CHECK(common::is_ok(common::remove_file(path.c_str())));
+    CHECK(!common::file_exists(path.c_str()).value_or(true));
+    CHECK(common::remove_file(path.c_str()) == common::Status::kNotFound);
+
+    // The name is free for a new file while the old one is still open.
+    common::File new_file{};
+    REQUIRE(common::is_ok(new_file.open(path.c_str(), create)));
+    CHECK(common::is_ok(new_file.write_all(bytes_of("new"))));
+    CHECK(common::is_ok(new_file.close()));
+    CHECK(read_all(path) == "new");
+
+    std::array<std::uint8_t, 32U> buffer{};
+    const common::Result<std::size_t> count{old_file.read_at(common::Span<std::uint8_t>{buffer}, 0U)};
+    REQUIRE(count.has_value());
+    const std::string old_contents{reinterpret_cast<const char*>(buffer.data()), count.value()};
+    CHECK(old_contents == "old contents");
+    CHECK(common::is_ok(old_file.close()));
+}

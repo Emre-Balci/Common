@@ -168,7 +168,12 @@ private:
     NativeHandle descriptor_{kInvalidNativeHandle};
 };
 
-/// Deletes @p path (unlink; DeleteFileW on Windows). @return kNotFound if it does not exist.
+/// Deletes @p path (unlink). @return kNotFound if it does not exist.
+///
+/// On Windows it deletes with POSIX semantics where the file system offers them (NTFS on Windows 10
+/// 1607 and later): the name goes at once, even while the file is open or mapped, and open handles
+/// and mappings keep the file. Elsewhere (e.g. FAT) it uses DeleteFileW(), which cannot delete a
+/// mapped file and leaves the name of an open file until its last handle closes.
 Status remove_file(const char* path) noexcept;
 
 /// Renames @p from to @p to, atomically replacing an existing @p to on the same file system.

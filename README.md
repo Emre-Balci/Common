@@ -249,7 +249,7 @@ Windows equivalent or reports `Status::kNotSupported`:
 | `RtThread` and the current-thread functions | `kOther` only: Windows has no `SCHED_FIFO`/`SCHED_RR`, so those report `kNotSupported`. Affinity is limited to one processor group, and names are thread descriptions |
 | `lock_process_memory`, `configure_allocator_for_rt` | `kNotSupported` (no `mlockall` or glibc malloc) |
 | `enable_flush_denormals`, `enable_fp_traps` | MXCSR, and `_controlfp_s` (traps raise structured exceptions) |
-| `File`, file-system functions | UTF-8 paths through the wide-character API; files shared like POSIX files; `rename_file` replaces open files where NTFS offers POSIX semantics; permission bits are checked but have no effect |
+| `File`, file-system functions | UTF-8 paths through the wide-character API; files shared like POSIX files; `rename_file` replaces open files, and `remove_file` deletes open and mapped files, where NTFS offers POSIX semantics; permission bits are checked but have no effect |
 | `MappedFile` | `CreateFileMapping`/`MapViewOfFile`, `VirtualLock`; see `file/mapped_file.hpp` for the differences |
 | `SerialPort` | COM ports (`"COM3"`), overlapped I/O cancelled at the `Deadline`; always exclusive; bytes with parity errors are passed on |
 | `write_log_line_to_fd` | Takes a `HANDLE` (`NativeHandle`), e.g. `GetStdHandle(STD_ERROR_HANDLE)` |

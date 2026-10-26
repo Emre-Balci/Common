@@ -178,6 +178,12 @@ HANDLE open_attributes(const wchar_t* const path) noexcept {
                          nullptr);
 }
 
+/// @return true if @p error is how Windows or the file system turns down a request for POSIX semantics
+///         (FileRenameInfoEx, FileDispositionInfoEx): an older Windows, or e.g. FAT or a network share.
+[[nodiscard]] bool lacks_posix_semantics(const DWORD error) noexcept {
+    return (error == ERROR_INVALID_PARAMETER) || (error == ERROR_NOT_SUPPORTED) || (error == ERROR_INVALID_FUNCTION);
+}
+
 /// Renames @p from to @p to with POSIX semantics (Windows 10 1607 and later, on NTFS): an existing
 /// @p to is replaced even while it is open, as with rename(2), and open handles keep the old file.
 /// @return kNotSupported where Windows or the file system does not offer these semantics.
@@ -208,11 +214,31 @@ Status rename_posix(const wchar_t* const from, const wchar_t* const to) noexcept
         if (::SetFileInformationByHandle(source, FileRenameInfoEx, request.data(),
                                          static_cast<DWORD>(kNameOffset + ((length + 1U) * sizeof(wchar_t)))) == FALSE) {
             const DWORD error{::GetLastError()};
-            const bool unsupported{(error == ERROR_INVALID_PARAMETER) || (error == ERROR_NOT_SUPPORTED) ||
-                                   (error == ERROR_INVALID_FUNCTION)};
-            status = unsupported ? Status::kNotSupported : detail::status_from_win32(error);
+            status = lacks_posix_semantics(error) ? Status::kNotSupported : detail::status_from_win32(error);
         }
         static_cast<void>(::CloseHandle(source));
+    }
+    return status;
+}
+
+/// Deletes @p path with POSIX semantics (Windows 10 1607 and later, on NTFS): the name goes at once,
+/// as with unlink(2), even while the file is open or mapped, and open handles and mappings keep the
+/// file until they close.
+/// @return kNotSupported where Windows or the file system does not offer these semantics.
+Status remove_posix(const wchar_t* const path) noexcept {
+    // Deleting needs DELETE access. FILE_FLAG_OPEN_REPARSE_POINT deletes a symbolic link itself, as
+    // unlink(2) does; without FILE_FLAG_BACKUP_SEMANTICS a directory does not open (kInvalidArgument).
+    const HANDLE handle{::CreateFileW(path, DELETE | SYNCHRONIZE, kShareAll, nullptr, OPEN_EXISTING,
+                                      FILE_FLAG_OPEN_REPARSE_POINT, nullptr)};
+    Status status{(handle != INVALID_HANDLE_VALUE) ? Status::kOk : path_error(path, ::GetLastError())};
+    if (is_ok(status)) {
+        FILE_DISPOSITION_INFO_EX info{};
+        info.Flags = FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS;
+        if (::SetFileInformationByHandle(handle, FileDispositionInfoEx, &info, sizeof(info)) == FALSE) {
+            const DWORD error{::GetLastError()};
+            status = lacks_posix_semantics(error) ? Status::kNotSupported : path_error(path, error);
+        }
+        static_cast<void>(::CloseHandle(handle));
     }
     return status;
 }
@@ -738,8 +764,13 @@ Status remove_file(const char* const path) noexcept {
 #if defined(_WIN32)
         detail::WidePath wide{};
         status = wide.assign(path);
-        if (is_ok(status) && (::DeleteFileW(wide.c_str()) == FALSE)) {
-            status = path_error(wide.c_str(), ::GetLastError());
+        if (is_ok(status)) {
+            status = remove_posix(wide.c_str());
+        }
+        if (status == Status::kNotSupported) {
+            // Without POSIX semantics (e.g. FAT or a network share), a mapped file cannot be deleted,
+            // and the name of an open file stays until its last handle closes.
+            status = (::DeleteFileW(wide.c_str()) != FALSE) ? Status::kOk : path_error(wide.c_str(), ::GetLastError());
         }
 #else
         status = (::unlink(path) == 0) ? Status::kOk : last_error();
