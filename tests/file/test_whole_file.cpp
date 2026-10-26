@@ -108,7 +108,7 @@ TEST_CASE(whole_file_read_file) {
     CHECK(common::read_file(nullptr, small).status() == common::Status::kInvalidArgument);
     CHECK(common::read_file(directory.path().c_str(), small).status() == common::Status::kInvalidArgument);
 
-#if !defined(_WIN32)
+#if defined(__linux__)
     // /proc reports a size of 0 but has contents: read_file() reads to the end of file.
     std::array<std::uint8_t, 4096U> proc{};
     const common::Result<std::size_t> stat_count{common::read_file("/proc/self/stat", proc)};

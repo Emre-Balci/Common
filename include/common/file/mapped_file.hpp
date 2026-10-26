@@ -57,6 +57,9 @@
 ///   pages beyond the end raising SIGBUS. An I/O error while a page is read in raises the structured
 ///   exception EXCEPTION_IN_PAGE_ERROR instead of SIGBUS.
 /// - A kReadWrite mapping keeps a handle to its file (shared like any File) for sync().
+///
+/// macOS and iOS have no MAP_POPULATE: there population touches every page after mapping, as on
+/// Windows.
 
 #ifndef COMMON_FILE_MAPPED_FILE_HPP
 #define COMMON_FILE_MAPPED_FILE_HPP

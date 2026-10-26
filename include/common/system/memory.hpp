@@ -15,7 +15,8 @@ namespace common {
 
 /// Locks all current and future pages in RAM (mlockall(MCL_CURRENT | MCL_FUTURE)).
 /// @return kResourceLimit if RLIMIT_MEMLOCK is too small, kPermissionDenied without privilege;
-///         kNotSupported on Windows, which has no equivalent (MappedFile::lock() locks a mapping).
+///         kNotSupported on Windows, macOS and iOS, which have no equivalent (MappedFile::lock()
+///         locks a mapping).
 Status lock_process_memory() noexcept;
 
 /// Stops glibc malloc from returning memory to the OS (trim) and from serving requests with

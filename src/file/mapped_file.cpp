@@ -122,11 +122,30 @@ std::uint32_t protection_of(const MapMode mode) noexcept {
 
 std::uint32_t flags_of(const MapOptions& options) noexcept {
     std::uint32_t flags{(options.mode == MapMode::kCopyOnWrite) ? to_bits(MAP_PRIVATE) : to_bits(MAP_SHARED)};
+#if COMMON_LINUX_API
     if (options.populate) {
         flags |= to_bits(MAP_POPULATE);
     }
+#endif
     return flags;
 }
+
+#if !COMMON_LINUX_API
+/// macOS and iOS have no MAP_POPULATE: asks for the pages to be read ahead and touches every one, so
+/// that they are resident and mapped. Every page of a kCopyOnWrite mapping is written with its own
+/// value, which gives the mapping its private copy now rather than at the first write, as population
+/// does on Linux.
+void populate(void* const region, const std::size_t size, const MapMode mode) noexcept {
+    static_cast<void>(::madvise(region, size, MADV_WILLNEED));
+    volatile std::uint8_t* const bytes{static_cast<volatile std::uint8_t*>(region)};
+    for (std::size_t offset{0U}; offset < size; offset += kPageSize) {
+        const std::uint8_t value{bytes[offset]};
+        if (mode == MapMode::kCopyOnWrite) {
+            bytes[offset] = value;
+        }
+    }
+}
+#endif
 
 #endif
 
@@ -235,6 +254,11 @@ Status map_region(const NativeHandle descriptor, const MapOptions& options, cons
         static_cast<void>(::munmap(mapped, size));
     } else {
         region = mapped;
+#if !COMMON_LINUX_API
+        if (options.populate) {
+            populate(region, size, options.mode);
+        }
+#endif
     }
     return status;
 #endif

@@ -75,6 +75,13 @@ TEST_CASE(rt_thread_normal_policy_with_affinity) {
     config.stack_size = 256U * 1024U;
 
     common::RtThread thread{};
+#if defined(__ANDROID__) || defined(__APPLE__)
+    // Bionic cannot create a thread with an affinity (the thread sets its own instead), and macOS and
+    // iOS have none.
+    CHECK(thread.start(config, &probe_entry, &probe) == common::Status::kNotSupported);
+    CHECK(!thread.joinable());
+    config.affinity = common::CpuSet{};
+#endif
     REQUIRE(common::is_ok(thread.start(config, &probe_entry, &probe)));
     CHECK(thread.joinable());
     CHECK(thread.start(config, &probe_entry, &probe) == common::Status::kAlreadyRunning);
@@ -83,7 +90,9 @@ TEST_CASE(rt_thread_normal_policy_with_affinity) {
     CHECK(thread.join() == common::Status::kNotRunning);
 
     CHECK(probe.ran.load());
+#if !defined(__ANDROID__) && !defined(__APPLE__)
     CHECK(probe.cpu.load() == 0);
+#endif
     CHECK(probe.policy == common::SchedPolicy::kOther);
     CHECK(std::strcmp(probe.name.data(), "probe") == 0);
 }
@@ -129,12 +138,18 @@ TEST_CASE(current_thread_configuration) {
     std::thread worker{[]() {
         CHECK(common::is_ok(common::set_current_thread_name("worker")));
         CHECK(common::set_current_thread_name("this-name-is-too-long") == common::Status::kInvalidArgument);
+        CHECK(common::set_current_thread_affinity(common::CpuSet{}) == common::Status::kInvalidArgument);
+#if defined(__APPLE__)
+        // macOS and iOS do not bind threads to CPUs, nor tell where one runs.
+        CHECK(common::set_current_thread_affinity(common::CpuSet::single(0U)) == common::Status::kNotSupported);
+        CHECK(common::current_cpu() == -1);
+#else
         CHECK(common::is_ok(common::set_current_thread_affinity(common::CpuSet::single(0U))));
         CHECK(common::current_cpu() == 0);
-        CHECK(common::set_current_thread_affinity(common::CpuSet{}) == common::Status::kInvalidArgument);
         // No CPU of the set exists.
         CHECK(common::set_current_thread_affinity(common::CpuSet::single(common::CpuSet::kMaxCpus - 1U)) ==
               common::Status::kInvalidArgument);
+#endif
         CHECK(common::is_ok(common::set_current_thread_scheduling(common::SchedPolicy::kOther, 0)));
         common::SchedPolicy policy{common::SchedPolicy::kFifo};
         std::int32_t priority{-1};

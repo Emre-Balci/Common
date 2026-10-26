@@ -76,8 +76,11 @@ Status call_with_restart(const Call& call) noexcept {
     return status;
 }
 
-speed_t to_speed(const BaudRate baud_rate) noexcept {
+/// @return the termios speed of @p baud_rate; kNotSupported for a speed that termios lacks (on macOS
+///         and iOS, those above 230400 bit/s).
+Result<speed_t> to_speed(const BaudRate baud_rate) noexcept {
     speed_t speed{B38400};
+    bool supported{true};
     switch (baud_rate) {
         case BaudRate::k1200:
             speed = B1200;
@@ -106,6 +109,7 @@ speed_t to_speed(const BaudRate baud_rate) noexcept {
         case BaudRate::k230400:
             speed = B230400;
             break;
+#if defined(B460800)
         case BaudRate::k460800:
             speed = B460800;
             break;
@@ -142,15 +146,32 @@ speed_t to_speed(const BaudRate baud_rate) noexcept {
         case BaudRate::k4000000:
             speed = B4000000;
             break;
+#else
+        case BaudRate::k460800:
+        case BaudRate::k500000:
+        case BaudRate::k576000:
+        case BaudRate::k921600:
+        case BaudRate::k1000000:
+        case BaudRate::k1152000:
+        case BaudRate::k1500000:
+        case BaudRate::k2000000:
+        case BaudRate::k2500000:
+        case BaudRate::k3000000:
+        case BaudRate::k3500000:
+        case BaudRate::k4000000:
+            supported = false;
+            break;
+#endif
     }
-    return speed;
+    return supported ? Result<speed_t>::success(speed) : Result<speed_t>::failure(Status::kNotSupported);
 }
 
 /// @return the BaudRate for a termios speed; kNotSupported for a speed outside the enumeration.
 Result<BaudRate> from_speed(const speed_t speed) noexcept {
     Result<BaudRate> result{Result<BaudRate>::failure(Status::kNotSupported)};
     for (const BaudRate candidate : detail::kAllBaudRates) {
-        if (to_speed(candidate) == speed) {
+        const Result<speed_t> candidate_speed{to_speed(candidate)};
+        if (candidate_speed.has_value() && (candidate_speed.value() == speed)) {
             result = Result<BaudRate>::success(candidate);
             break;
         }
@@ -213,11 +234,13 @@ Status raw_settings(const std::int32_t descriptor, const SerialOptions& options,
         // returns 0 can only mean a hang-up.
         settings.c_cc[VMIN] = 1U;
         settings.c_cc[VTIME] = 0U;
-        status = set_speed(settings, to_speed(options.baud_rate));
+        const Result<speed_t> speed{to_speed(options.baud_rate)};
+        status = speed.has_value() ? set_speed(settings, speed.value()) : speed.status();
     }
     return status;
 }
 
+#if COMMON_LINUX_API
 /// Converts a non-negative duration to a timespec.
 timespec to_relative_timespec(const Duration duration) noexcept {
     const std::int64_t ns{duration.count()};
@@ -226,6 +249,24 @@ timespec to_relative_timespec(const Duration duration) noexcept {
     ts.tv_nsec = ns % MonotonicClock::kNanosPerSecond;
     return ts;
 }
+#endif
+
+#if !COMMON_LINUX_API
+/// The timeout of poll() until @p deadline: whole milliseconds, rounded up so that it does not end
+/// before the deadline; -1 (no timeout) for Deadline::never().
+int poll_timeout(const Deadline& deadline) noexcept {
+    constexpr std::int64_t kNanosPerMillisecond{1'000'000};
+    constexpr std::int64_t kMaxMilliseconds{0x7FFFFFFF};
+    int milliseconds{-1};
+    if (!deadline.is_never()) {
+        const std::int64_t nanoseconds{deadline.remaining().count()};
+        const std::int64_t rounded_up{(nanoseconds / kNanosPerMillisecond) +
+                                      (((nanoseconds % kNanosPerMillisecond) != 0) ? 1 : 0)};
+        milliseconds = static_cast<int>((rounded_up < kMaxMilliseconds) ? rounded_up : kMaxMilliseconds);
+    }
+    return milliseconds;
+}
+#endif
 
 /// Waits until @p descriptor is ready for @p events or @p deadline passes.
 /// @return kOk when ready; kTimeout; kDisconnected on a hang-up or device error; kInterrupted when a
@@ -234,6 +275,7 @@ Status wait_ready(const std::int32_t descriptor, const short events, const Deadl
     pollfd entry{};
     entry.fd = descriptor;
     entry.events = events;
+#if COMMON_LINUX_API
     timespec timeout{};
     const timespec* timeout_pointer{nullptr};
     if (!deadline.is_never()) {
@@ -241,6 +283,9 @@ Status wait_ready(const std::int32_t descriptor, const short events, const Deadl
         timeout_pointer = &timeout;
     }
     const int ready{::ppoll(&entry, 1U, timeout_pointer, nullptr)};
+#else
+    const int ready{::poll(&entry, 1U, poll_timeout(deadline))};  // No ppoll() on macOS and iOS.
+#endif
     Status status{Status::kTimeout};
     if (ready < 0) {
         status = (errno == EINTR) ? Status::kInterrupted : last_error();
@@ -379,7 +424,8 @@ Status SerialPort::set_baud_rate(const BaudRate baud_rate) noexcept {
         status = (::tcgetattr(descriptor_, &settings) == 0) ? Status::kOk : last_error();
     }
     if (is_ok(status)) {
-        status = set_speed(settings, to_speed(baud_rate));
+        const Result<speed_t> speed{to_speed(baud_rate)};
+        status = speed.has_value() ? set_speed(settings, speed.value()) : speed.status();
     }
     if (is_ok(status)) {
         status = apply(descriptor_, TCSADRAIN, settings);

@@ -45,6 +45,7 @@ void clear_fp_exceptions() noexcept;
 /// Makes invalid, divide-by-zero and overflow raise SIGFPE on the calling thread (on Windows, a
 /// floating-point structured exception, which the C runtime turns into SIGFPE for a handler
 /// installed with signal()). Intended for test and debug builds to locate the first faulty operation.
+/// kNotSupported where the C library cannot enable traps, e.g. Android's bionic.
 Status enable_fp_traps() noexcept;
 Status disable_fp_traps() noexcept;
 

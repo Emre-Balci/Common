@@ -661,6 +661,27 @@ Status File::preallocate(const std::uint64_t length) noexcept {  // NOLINT(reada
                 status = set_end_of_file(descriptor_, length);  // Grows the file, as posix_fallocate does.
             }
         }
+#elif defined(__APPLE__)
+        // macOS and iOS have no posix_fallocate: F_PREALLOCATE reserves storage after the end of the
+        // file (contiguous if it can), and ftruncate() then grows the file into it.
+        struct stat info {};
+        status = (::fstat(descriptor_, &info) == 0) ? Status::kOk : last_error();
+        const std::uint64_t current{is_ok(status) ? static_cast<std::uint64_t>(info.st_size) : 0U};
+        if (is_ok(status) && (current < length)) {
+            fstore_t store{};
+            store.fst_flags = static_cast<std::uint32_t>(F_ALLOCATECONTIG) | static_cast<std::uint32_t>(F_ALLOCATEALL);
+            store.fst_posmode = F_PEOFPOSMODE;
+            store.fst_offset = 0;
+            store.fst_length = static_cast<off_t>(length - current);
+            if (::fcntl(descriptor_, F_PREALLOCATE, &store) == -1) {
+                store.fst_flags = static_cast<std::uint32_t>(F_ALLOCATEALL);  // Not contiguous, then.
+                status = (::fcntl(descriptor_, F_PREALLOCATE, &store) == -1) ? last_error() : Status::kOk;
+            }
+            if (is_ok(status)) {
+                const off_t new_size{static_cast<off_t>(length)};
+                status = call_with_restart([this, new_size]() noexcept { return ::ftruncate(descriptor_, new_size); });
+            }
+        }
 #else
         status = Status::kInterrupted;
         for (std::uint32_t attempt{0U}; attempt < kMaxInterruptRestarts; ++attempt) {
@@ -685,6 +706,13 @@ Status File::sync() noexcept {
     if (is_open()) {
 #if defined(_WIN32)
         status = (::FlushFileBuffers(descriptor_) != FALSE) ? Status::kOk : last_error();
+#elif defined(__APPLE__)
+        // fsync() on macOS and iOS leaves the data in the drive's cache; F_FULLFSYNC flushes that too,
+        // as fsync() does on Linux. A file system without it gets fsync().
+        status = call_with_restart([this]() noexcept { return (::fcntl(descriptor_, F_FULLFSYNC) == -1) ? -1 : 0; });
+        if (!is_ok(status)) {
+            status = call_with_restart([this]() noexcept { return ::fsync(descriptor_); });
+        }
 #else
         status = call_with_restart([this]() noexcept { return ::fsync(descriptor_); });
 #endif
@@ -695,8 +723,8 @@ Status File::sync() noexcept {
 Status File::sync_data() noexcept {
     Status status{Status::kInvalidArgument};
     if (is_open()) {
-#if defined(_WIN32)
-        status = sync();  // Windows has no cheaper call for the data alone.
+#if defined(_WIN32) || defined(__APPLE__)
+        status = sync();  // No cheaper call for the data alone (on macOS and iOS, none that flushes it).
 #else
         status = call_with_restart([this]() noexcept { return ::fdatasync(descriptor_); });
 #endif

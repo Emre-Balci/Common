@@ -379,8 +379,14 @@ TEST_CASE(serial_port_settings) {
     REQUIRE(common::is_ok(port.open(terminal.slave_path(), options)));
     CHECK(port.baud_rate().value() == common::BaudRate::k115200);
 
+#if defined(__APPLE__)
+    // termios of macOS and iOS goes up to 230400 bit/s.
+    CHECK(port.set_baud_rate(common::BaudRate::k500000) == common::Status::kNotSupported);
+    CHECK(port.baud_rate().value() == common::BaudRate::k115200);
+#else
     CHECK(common::is_ok(port.set_baud_rate(common::BaudRate::k500000)));
     CHECK(port.baud_rate().value() == common::BaudRate::k500000);
+#endif
     CHECK(common::is_ok(port.set_baud_rate(common::BaudRate::k9600)));
     CHECK(port.baud_rate().value() == common::BaudRate::k9600);
 }
