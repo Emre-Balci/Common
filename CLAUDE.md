@@ -58,6 +58,26 @@ blocks. There is no Mac here: those blocks are only reviewed, and the README's t
 - Match the existing style: 4-space indent, 120 columns, `lower_case` functions,
   `CamelCase` types, `kConstant`, `member_`.
 
+## Rules learned building common (verified on all toolchains)
+- A class derived from `Task`, `Unit` or `Object` is `final`, or declares a protected non-virtual
+  destructor and no friends. A `friend` in a polymorphic class with a protected destructor makes GCC's
+  `-Wnon-virtual-dtor` fail: give other classes access through a passkey (see `detail::TaskKey`).
+- A type published through `SeqLock` is trivial (no default member initialisers): GCC 9's
+  `-Wclass-memaccess` rejects the memcpy otherwise.
+- Write defaulted default constructors as `X() noexcept = default;` (MSVC 19.32 deduces
+  potentially-throwing for `std::array<ClassType, N>` members), and test conditions on non-type
+  template parameters with `if constexpr` (MSVC C4127).
+- A static data member template of a class template is MSVC C4268: put such tables in a nested class
+  template (see `detail::inplace_function::Thunks`).
+- GCC 9's `-Wshadow` flags a function-pointer parameter named like a member function; Clang's
+  `-Wunused-lambda-capture` flags capturing a constant.
+- libc++ (the NDK) does not mark `std::string_view(const char*)` noexcept: pass a `string_view`, not a
+  literal, where a construction must be nothrow (e.g. `ObjectPool::create`).
+- Do not name anything `emit`, `signals`, `slots` or `foreach` (Qt macros); `Signal::notify()`.
+- Status codes: `kAlreadyExists` for a duplicate registration (or a task already in a runner),
+  `kAlreadyRunning`/`kNotRunning` for start/stop, `kInvalidArgument` for a bad argument or a call in
+  the wrong state.
+
 ## Build & test
 Build in WSL (Ubuntu-24.04). When calling `wsl` from Git Bash on Windows, set `MSYS_NO_PATHCONV=1`.
 For loops or variables, put the commands in a script file, because `wsl.exe` mangles `$var`.
