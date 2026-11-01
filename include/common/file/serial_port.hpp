@@ -162,7 +162,7 @@ public:
 
     /// Waits until all written bytes have been sent on the line (tcdrain; FlushFileBuffers on
     /// Windows). The kernel's wait is not bounded by a deadline: with hardware flow control a
-    /// stalled peer can hold it.
+    /// stalled peer can hold it, and on macOS a pseudo-terminal until its other end reads.
     Status drain() noexcept;
 
     /// Discards received bytes that have not been read yet, e.g. stale output of the device before

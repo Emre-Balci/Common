@@ -370,6 +370,11 @@ Status SerialPort::open(const char* const path, const SerialOptions& options) no
             }
         }
     }
+    if (is_ok(status) && (::isatty(descriptor) == 0)) {
+        // Not a terminal device. Checked before any ioctl(), whose error differs by device: macOS's
+        // /dev/null answers ENODEV, which would read as an unplugged adapter.
+        status = Status::kInvalidArgument;
+    }
     if (is_ok(status) && options.exclusive) {
         // ioctl(2) is variadic in C; TIOCEXCL takes no argument.
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,hicpp-vararg)

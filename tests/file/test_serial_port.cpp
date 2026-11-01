@@ -296,8 +296,9 @@ TEST_CASE(serial_port_raw_round_trip) {
     // Raw mode: "\r" is neither translated to "\n" nor expanded to "\r\n", and no echo comes back.
     const std::string command{"AT Z\r"};
     CHECK(common::is_ok(port.write_all(bytes_of(command), common::Deadline::after(1s))));
-    CHECK(common::is_ok(port.drain()));
     CHECK(terminal.receive(command.size()) == command);
+    // After the receive: on macOS, a pseudo-terminal drains only once its other end has read.
+    CHECK(common::is_ok(port.drain()));
 
     const std::string response{"41 0C 1A F8\r\r>"};
     CHECK(terminal.send(response));

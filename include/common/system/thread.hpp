@@ -19,9 +19,9 @@ namespace common {
 
 /// Scheduling policy of a thread.
 ///
-/// Windows has no real-time policies: there, kOther is the normal thread priority, and kFifo and
-/// kRoundRobin are reported as kNotSupported (after their priority is checked as on Linux, so that
-/// a configuration is equally valid on both).
+/// Windows, macOS and iOS have no real-time policies: there, kOther is the normal thread priority
+/// (on macOS and iOS, the default one), and kFifo and kRoundRobin are reported as kNotSupported
+/// (after their priority is checked as on Linux, so that a configuration is equally valid on all).
 enum class SchedPolicy : std::uint8_t {
     kOther,       ///< SCHED_OTHER (CFS); priority must be 0.
     kFifo,        ///< SCHED_FIFO; priority 1..99.
@@ -64,12 +64,13 @@ struct ThreadConfig final {
 };
 
 /// Applies a policy and priority to the calling thread.
-/// SCHED_FIFO / SCHED_RR need CAP_SYS_NICE or an RLIMIT_RTPRIO grant (see README); on Windows they
-/// are kNotSupported, and kOther sets the normal thread priority.
+/// SCHED_FIFO / SCHED_RR need CAP_SYS_NICE or an RLIMIT_RTPRIO grant (see README); on Windows, macOS
+/// and iOS they are kNotSupported, and kOther sets the normal thread priority.
 Status set_current_thread_scheduling(SchedPolicy policy, std::int32_t priority) noexcept;
 
 /// Reads the calling thread's policy and priority. On Windows, the policy is always kOther and the
-/// priority is the Windows thread priority, 0 (THREAD_PRIORITY_NORMAL) unless changed otherwise.
+/// priority is the Windows thread priority, 0 (THREAD_PRIORITY_NORMAL) unless changed otherwise. On
+/// macOS and iOS, the priority is the distance from the default priority, likewise 0 unless changed.
 Status get_current_thread_scheduling(SchedPolicy& policy, std::int32_t& priority) noexcept;
 
 /// Restricts the calling thread to @p cpus. @return kInvalidArgument for an empty set or one without

@@ -371,7 +371,7 @@ beyond POSIX either has an equivalent or reports `Status::kNotSupported`:
 | Component | On macOS and iOS |
 |---|---|
 | `sleep_until`, `PeriodicTimer` | No `clock_nanosleep`: `nanosleep` for the time that is left, again until `MonotonicClock` reaches the deadline; never early |
-| `RtThread` and the current-thread functions | No CPU affinity (`kNotSupported`), and `current_cpu()` is -1; names through `pthread_setname_np(name)` |
+| `RtThread` and the current-thread functions | `kOther` only, at the default priority: as on Windows, `kFifo`/`kRoundRobin` report `kNotSupported` (Darwin's `SCHED_FIFO`/`SCHED_RR` are not real-time classes). No CPU affinity (`kNotSupported`), and `current_cpu()` is -1; names through `pthread_setname_np(name)` |
 | `lock_process_memory`, `configure_allocator_for_rt` | `kNotSupported` (no `mlockall` or glibc malloc) |
 | `enable_fp_traps` | `kNotSupported` (no `feenableexcept`) |
 | `File::preallocate`, `sync`, `sync_data` | `F_PREALLOCATE` and `ftruncate`; `F_FULLFSYNC`, which flushes the drive's cache as `fsync` does on Linux (`fsync` where the file system lacks it) |
