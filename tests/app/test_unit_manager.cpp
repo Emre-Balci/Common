@@ -227,6 +227,7 @@ TEST_CASE(unit_manager_find_duplicates_clear_and_destructor) {
         CHECK(manager.find("beta") == &b);
         CHECK(manager.find("bet") == nullptr);
         CHECK(manager.find("betas") == nullptr);
+        CHECK(manager.find(std::string_view{"beta\0\0", 6U}) == nullptr);  // A NUL never matches.
         const common::UnitManager<3U>& view{manager};
         CHECK(view.find("alpha") == &a);
 

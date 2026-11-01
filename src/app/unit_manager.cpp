@@ -30,11 +30,12 @@ namespace {
     return all;
 }
 
-/// Compares a unit name with @p text, character by character.
+/// Compares a unit name with @p text, character by character; a NUL character in @p text never
+/// matches, so the comparison stops at the end of @p name.
 [[nodiscard]] bool name_equals(const char* const name, const std::string_view text) noexcept {
     bool equal{text.size() <= kMaxUnitNameLength};
     for (std::size_t i{0U}; equal && (i < text.size()); ++i) {
-        equal = (name[i] == text[i]);
+        equal = (name[i] != '\0') && (name[i] == text[i]);
     }
     return equal && (name[text.size()] == '\0');
 }

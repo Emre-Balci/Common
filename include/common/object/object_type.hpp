@@ -52,11 +52,12 @@ namespace object_type {
     return equal;
 }
 
-/// Compares a valid name with @p text, which need not be NUL-terminated.
+/// Compares a valid name with @p text, which need not be NUL-terminated and may contain NUL
+/// characters: the comparison never reads past the end of @p name.
 [[nodiscard]] constexpr bool name_equals(const char* const name, const std::string_view text) noexcept {
     bool equal{text.size() <= kMaxObjectTypeNameLength};
     for (std::size_t i{0U}; equal && (i < text.size()); ++i) {
-        equal = (name[i] == text[i]);
+        equal = (name[i] != '\0') && (name[i] == text[i]);
     }
     return equal && (name[text.size()] == '\0');
 }

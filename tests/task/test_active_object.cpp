@@ -223,6 +223,8 @@ TEST_CASE(active_object_request_stop_from_a_command) {
     REQUIRE(active.post([]() noexcept { active.request_stop(); }) == common::Status::kOk);
     CHECK(eventually([]() noexcept { return active.stopping(); }));
     CHECK(active.post([]() noexcept {}) == common::Status::kNotRunning);
+    // The thread left its loop: its heartbeat is parked before stop(), so a Watchdog does not see it die.
+    CHECK(eventually([]() noexcept { return active.heartbeat().last_beat() == common::TimePoint::max(); }));
     CHECK(active.running());  // Until stop() joins the thread.
     CHECK(active.stop() == common::Status::kOk);
     CHECK(!active.running());

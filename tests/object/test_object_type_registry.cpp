@@ -85,6 +85,10 @@ TEST_CASE(object_type_registry_add_and_find) {
     CHECK(registry.find("Log") == nullptr);
     CHECK(registry.find("LoggerX") == nullptr);
     CHECK(registry.find("") == nullptr);
+    // Text from a file may contain NUL characters: they never match, and nothing is read past a name.
+    constexpr std::string_view kPadded{"Logger\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 36U};
+    CHECK(registry.find(kPadded) == nullptr);
+    CHECK(registry.find(kPadded.substr(0U, 7U)) == nullptr);
     CHECK(registry.find_by_id(7U) == &Gateway::kType);
     CHECK(registry.find_by_id(0U) == nullptr);  // Logger has id 0, which never matches.
     CHECK(registry.find_by_id(8U) == nullptr);

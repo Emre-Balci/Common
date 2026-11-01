@@ -30,7 +30,7 @@ struct NoEventData final {};
 /// - State and Event are enumerations. Data is what events carry (e.g. a fill's quantity and price);
 ///   guards and actions receive it with the event.
 /// - The tables live in a Definition, which validates them once during initialisation and is shared
-///   by any number of machines: one per order costs a state, two pointers and a flag, and is
+///   by any number of machines: one per order costs two pointers, two states and two flags, and is
 ///   constructed in O(1) on the real-time path.
 /// - dispatch(event) fires the first transition, in table order, whose source is the current state,
 ///   whose event matches and whose guard (if any) allows it: for an external transition the exit

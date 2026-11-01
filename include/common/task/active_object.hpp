@@ -187,7 +187,6 @@ public:
                 exit_.store(true, std::memory_order_release);
                 status = thread_.join();
                 running_ = false;
-                heartbeat_.beat(TimePoint::max());
             }
             discard_queued();
         }
@@ -286,6 +285,8 @@ private:
                 cpu_relax();
             }
         }
+        // Parked as soon as the loop ends: after request_stop(), stop() may join the thread much later.
+        heartbeat_.beat(TimePoint::max());
     }
 
     /// Destroys the queued commands without running them, with no thread running and no post in flight.
