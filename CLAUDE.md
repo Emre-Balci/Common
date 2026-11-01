@@ -81,6 +81,8 @@ blocks. There is no Mac here: those blocks are only reviewed, and the README's t
 ## Build & test
 Build in WSL (Ubuntu-24.04). When calling `wsl` from Git Bash on Windows, set `MSYS_NO_PATHCONV=1`.
 For loops or variables, put the commands in a script file, because `wsl.exe` mangles `$var`.
+Building on `/mnt/<drive>` is slow: copy the tree to the Linux file system first
+(`rsync -a --delete --exclude build --exclude .git /mnt/d/Repos/Common/ ~/common-work/`) and build there.
 
 ```bash
 cmake --preset gcc-debug && cmake --build --preset gcc-debug && ctest --preset gcc-debug
@@ -97,7 +99,10 @@ has miscompiled code at `/O2` that passed in Debug.
 
 For Android, set `ANDROID_NDK_HOME` and build `android-arm64` and `android-x86_64` (also
 warning-free), and run `ctest --preset android-x86_64`: its executables are static, so the tests run
-on the Linux host with bionic.
+on the Linux host with bionic. The NDK lives in WSL at `~/Android/Sdk/ndk/<revision>` (r29 is
+`29.0.14206865`). To install it, unzip `https://dl.google.com/android/repository/android-ndk-r29-linux.zip`
+(Ubuntu needs the `unzip` package; Python's zipfile loses the executable bits) and rename
+`android-ndk-r29` to the `Pkg.Revision` of its `source.properties`.
 
 For macOS and iOS, run the `portable` preset (it must pass too). On a Mac: `macos-debug`,
 `macos-release` and `ios`.

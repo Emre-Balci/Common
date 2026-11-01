@@ -9,6 +9,7 @@
 #include "common/system/thread.hpp"
 #include "common/task/task.hpp"
 #include "common/task/task_executor.hpp"
+#include "common/task/task_scheduler.hpp"
 #include "common/time/clock.hpp"
 #include "common/time/deadline.hpp"
 #include "test_framework.hpp"
@@ -76,6 +77,50 @@ common::TaskExecutor<1U, 8U> g_cancel_executor{};
 bool cancel_executor_stopping() noexcept {
     return g_cancel_executor.stopping();
 }
+
+// For the test of jobs that use their own executor.
+common::TaskExecutor<2U, 8U> g_chain_executor{};
+
+/// A job that submits another job to g_chain_executor, after asking it to refuse new jobs if told to.
+class ChainJob final : public common::Task {
+public:
+    ChainJob() noexcept : Task{"chain"} {}
+
+    common::Task* next{nullptr};
+    bool stop_first{false};
+    common::Status submitted{common::Status::kOk};  // What submit(*next) returned; read once finished.
+
+private:
+    common::Status run(const common::TaskActivation& /*activation*/) noexcept override {
+        if (stop_first) {
+            g_chain_executor.request_stop();
+        }
+        if (next != nullptr) {
+            submitted = g_chain_executor.submit(*next);
+        }
+        return common::Status::kOk;
+    }
+};
+
+std::int64_t g_now_ns{0};  // The fake clock of the activation test.
+
+common::TimePoint fake_now() noexcept {
+    return common::TimePoint{common::Duration{g_now_ns}};
+}
+
+/// A job that keeps the activation of its last run.
+class RecordingJob final : public common::Task {
+public:
+    RecordingJob() noexcept : Task{"recording"} {}
+
+    common::TaskActivation last{};
+
+private:
+    common::Status run(const common::TaskActivation& activation) noexcept override {
+        last = activation;
+        return common::Status::kOk;
+    }
+};
 
 }  // namespace
 
@@ -203,6 +248,91 @@ TEST_CASE(task_executor_stop_cancel_cancels_queued_jobs) {
         CHECK(job.state() == common::TaskState::kCancelled);
         CHECK(job.runs.load(std::memory_order_relaxed) == 0);
     }
+}
+
+TEST_CASE(task_executor_jobs_submit_jobs_and_request_stop) {
+    CHECK(g_chain_executor.start(worker_config(), 0ms) == common::Status::kInvalidArgument);
+    CHECK(!g_chain_executor.running());
+
+    // first submits second; second refuses new jobs, then fails to submit third.
+    static ChainJob first{};
+    static ChainJob second{};
+    static ChainJob third{};
+    first.next = &second;
+    second.stop_first = true;
+    second.next = &third;
+    REQUIRE(g_chain_executor.start(worker_config()) == common::Status::kOk);
+    REQUIRE(g_chain_executor.submit(first) == common::Status::kOk);
+    CHECK(finish(first) == common::Status::kOk);
+    CHECK(first.submitted == common::Status::kOk);
+    CHECK(finish(second) == common::Status::kOk);
+    CHECK(second.state() == common::TaskState::kDone);
+    CHECK(second.submitted == common::Status::kNotRunning);
+    CHECK(third.state() == common::TaskState::kIdle);
+
+    // request_stop() only refuses new jobs: the workers go on until stop().
+    CHECK(g_chain_executor.stopping());
+    CHECK(g_chain_executor.running());
+    CHECK(g_chain_executor.submit(third) == common::Status::kNotRunning);
+    CHECK(g_chain_executor.stop() == common::Status::kOk);
+    CHECK(!g_chain_executor.running());
+}
+
+TEST_CASE(task_executor_activation_and_deadlines) {
+    RecordingJob job{};
+    common::TaskExecutor<1U, 4U> executor{&fake_now};
+
+    // Submitted at 100 ms, run at 120 ms: release is the submission, lateness 20 ms, deadline met.
+    g_now_ns = common::Duration{100ms}.count();
+    REQUIRE(executor.submit(job, common::Deadline::at(common::TimePoint{150ms})) == common::Status::kOk);
+    g_now_ns = common::Duration{120ms}.count();
+    CHECK(executor.run_pending(1U) == 1U);
+    CHECK(job.last.now == common::TimePoint{120ms});
+    CHECK(job.last.release == common::TimePoint{100ms});
+    CHECK(job.last.deadline.time_point() == common::TimePoint{150ms});
+    CHECK(job.last.sequence == 0U);
+    CHECK(job.last.missed == 0U);
+
+    // Submitted again with a deadline that passes before it runs: a deadline miss.
+    REQUIRE(executor.submit(job, common::Deadline::at(common::TimePoint{125ms})) == common::Status::kOk);
+    g_now_ns = common::Duration{130ms}.count();
+    CHECK(executor.run_pending(1U) == 1U);
+    CHECK(job.last.sequence == 1U);
+    CHECK(job.state() == common::TaskState::kDone);  // A miss is counted, not an error.
+
+    // Without a deadline: never a miss.
+    REQUIRE(executor.submit(job) == common::Status::kOk);
+    CHECK(executor.run_pending(1U) == 1U);
+    CHECK(job.last.deadline.is_never());
+
+    common::TaskStatistics statistics{};
+    REQUIRE(job.try_statistics(statistics));
+    CHECK(statistics.runs == 3U);
+    CHECK(statistics.deadline_misses == 1U);
+    CHECK(statistics.max_lateness_ns == common::Duration{20ms}.count());
+    CHECK(statistics.overruns == 0U);  // Jobs have no budget.
+}
+
+TEST_CASE(task_executor_and_scheduler_never_share_a_task) {
+    Job job{};
+    common::TaskScheduler<1U> scheduler{&fake_now};
+    common::TaskExecutor<1U, 4U> executor{};
+
+    // In a scheduler: an executor refuses it, and it stays scheduled.
+    REQUIRE(scheduler.add(job, common::TaskSchedule::periodic(10ms)) == common::Status::kOk);
+    CHECK(executor.submit(job) == common::Status::kAlreadyExists);
+    CHECK(job.state() == common::TaskState::kScheduled);
+    REQUIRE(scheduler.remove(job) == common::Status::kOk);
+
+    // Queued in an executor: a scheduler refuses it.
+    REQUIRE(executor.submit(job) == common::Status::kOk);
+    CHECK(scheduler.add(job, common::TaskSchedule::periodic(10ms)) == common::Status::kAlreadyExists);
+    CHECK(scheduler.size() == 0U);
+    CHECK(executor.run_pending(1U) == 1U);
+
+    // Finished: a scheduler may take it.
+    CHECK(scheduler.add(job, common::TaskSchedule::periodic(10ms)) == common::Status::kOk);
+    CHECK(scheduler.remove(job) == common::Status::kOk);
 }
 
 TEST_CASE(task_executor_stop_without_workers_cancels) {
