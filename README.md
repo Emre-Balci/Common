@@ -371,12 +371,12 @@ beyond POSIX either has an equivalent or reports `Status::kNotSupported`:
 | Component | On macOS and iOS |
 |---|---|
 | `sleep_until`, `PeriodicTimer` | No `clock_nanosleep`: `nanosleep` for the time that is left, again until `MonotonicClock` reaches the deadline; never early |
-| `RtThread` and the current-thread functions | No CPU affinity (`kNotSupported`), and `current_cpu()` is -1; names through `pthread_setname_np(name)` |
+| `RtThread` and the current-thread functions | `kOther` only, at the default priority: as on Windows, `kFifo`/`kRoundRobin` report `kNotSupported` (Darwin's `SCHED_FIFO`/`SCHED_RR` are not real-time classes). No CPU affinity (`kNotSupported`), and `current_cpu()` is -1; names through `pthread_setname_np(name)` |
 | `lock_process_memory`, `configure_allocator_for_rt` | `kNotSupported` (no `mlockall` or glibc malloc) |
 | `enable_fp_traps` | `kNotSupported` (no `feenableexcept`) |
 | `File::preallocate`, `sync`, `sync_data` | `F_PREALLOCATE` and `ftruncate`; `F_FULLFSYNC`, which flushes the drive's cache as `fsync` does on Linux (`fsync` where the file system lacks it) |
 | `MappedFile` | No `MAP_POPULATE`: population touches every page after mapping |
-| `SerialPort` | `poll` in place of `ppoll`; speeds up to 230400 bit/s, faster ones `kNotSupported`. iOS apps have no serial ports |
+| `SerialPort` | `poll` in place of `ppoll`; speeds up to 230400 bit/s, faster ones `kNotSupported`. Pseudo-terminals do not enforce exclusive access (`TIOCEXCL`). iOS apps have no serial ports |
 
 `COMMON_LINUX_API` in `core/config.hpp` tells the code which calls it has: 1 on Linux and Android,
 0 on macOS and iOS, and 0 on Linux with `COMMON_PORTABLE_POSIX`, which is how the tests cover the

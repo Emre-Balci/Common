@@ -34,12 +34,45 @@ int to_native(const SchedPolicy policy) noexcept {
     return native;
 }
 
+#if defined(__APPLE__)
+// macOS and iOS give every policy the priorities 15..47 around a default of 31, and their SCHED_FIFO
+// and SCHED_RR are not Linux's real-time classes. As on Windows, priorities are checked against the
+// Linux ranges, so that a configuration is equally valid everywhere; kOther runs at the default
+// priority, and the real-time policies are kNotSupported.
+constexpr std::int32_t kMinRealTimePriority{1};
+constexpr std::int32_t kMaxRealTimePriority{99};
+
+Status validate_priority(const SchedPolicy policy, const std::int32_t priority) noexcept {
+    bool valid{false};
+    switch (policy) {
+        case SchedPolicy::kOther:
+            valid = (priority == 0);
+            break;
+        case SchedPolicy::kFifo:
+        case SchedPolicy::kRoundRobin:
+            valid = (priority >= kMinRealTimePriority) && (priority <= kMaxRealTimePriority);
+            break;
+    }
+    return valid ? Status::kOk : Status::kInvalidArgument;
+}
+
+/// @return kOk for kOther; kNotSupported for the real-time policies.
+Status check_supported(const SchedPolicy policy) noexcept {
+    return (policy == SchedPolicy::kOther) ? Status::kOk : Status::kNotSupported;
+}
+#else
 Status validate_priority(const SchedPolicy policy, const std::int32_t priority) noexcept {
     const int native{to_native(policy)};
     const int min{::sched_get_priority_min(native)};
     const int max{::sched_get_priority_max(native)};
     return ((priority >= min) && (priority <= max)) ? Status::kOk : Status::kInvalidArgument;
 }
+
+/// @return kOk: Linux has every policy.
+Status check_supported(const SchedPolicy /*policy*/) noexcept {
+    return Status::kOk;
+}
+#endif
 
 #if !defined(__APPLE__)
 void to_native(const CpuSet& cpus, cpu_set_t& native) noexcept {
@@ -87,13 +120,31 @@ private:
     bool valid_;
 };
 
+#if defined(__APPLE__)
+/// Reads the default priority, which pthread_attr_init() puts into new attributes.
+Status default_priority(sched_param& param) noexcept {
+    ThreadAttributes attributes{};
+    return attributes.valid() ? detail::status_from_errno(::pthread_attr_getschedparam(attributes.get(), &param))
+                              : Status::kSystemError;
+}
+#endif
+
 }  // namespace
 
 Status set_current_thread_scheduling(const SchedPolicy policy, const std::int32_t priority) noexcept {
     Status status{validate_priority(policy, priority)};
     if (is_ok(status)) {
-        sched_param param{};
-        param.sched_priority = priority;
+        status = check_supported(policy);
+    }
+    sched_param param{};
+#if defined(__APPLE__)
+    if (is_ok(status)) {
+        status = default_priority(param);  // kOther runs at the default priority.
+    }
+#else
+    param.sched_priority = priority;
+#endif
+    if (is_ok(status)) {
         status = detail::status_from_errno(::pthread_setschedparam(::pthread_self(), to_native(policy), &param));
     }
     return status;
@@ -103,8 +154,19 @@ Status get_current_thread_scheduling(SchedPolicy& policy, std::int32_t& priority
     int native{SCHED_OTHER};
     sched_param param{};
     Status status{detail::status_from_errno(::pthread_getschedparam(::pthread_self(), &native, &param))};
+#if defined(__APPLE__)
+    // Relative to the default priority, as Windows reports it: 0 unless changed otherwise.
+    sched_param standard{};
     if (is_ok(status)) {
+        status = default_priority(standard);
+    }
+#endif
+    if (is_ok(status)) {
+#if defined(__APPLE__)
+        priority = param.sched_priority - standard.sched_priority;
+#else
         priority = param.sched_priority;
+#endif
         if (native == SCHED_FIFO) {
             policy = SchedPolicy::kFifo;
         } else if (native == SCHED_RR) {
@@ -170,6 +232,9 @@ Status RtThread::start(const ThreadConfig& config, const Entry entry, void* cons
     }
 
     Status status{validate_priority(config.policy, config.priority)};
+    if (is_ok(status)) {
+        status = check_supported(config.policy);
+    }
     if (!is_ok(status)) {
         return status;
     }
@@ -185,11 +250,13 @@ Status RtThread::start(const ThreadConfig& config, const Entry entry, void* cons
     if (rc == 0) {
         rc = ::pthread_attr_setschedpolicy(attr, to_native(config.policy));
     }
+#if !defined(__APPLE__)  // On macOS and iOS, new attributes hold the default priority, at which kOther runs.
     if (rc == 0) {
         sched_param param{};
         param.sched_priority = config.priority;
         rc = ::pthread_attr_setschedparam(attr, &param);
     }
+#endif
     if ((rc == 0) && (config.stack_size != 0U)) {
         rc = ::pthread_attr_setstacksize(attr, config.stack_size);
     }

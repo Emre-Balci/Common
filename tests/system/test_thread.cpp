@@ -106,8 +106,8 @@ TEST_CASE(rt_thread_fifo_applied_or_denied) {
 
     common::RtThread thread{};
     const common::Status status{thread.start(config, &probe_entry, &probe)};
-#if defined(_WIN32)
-    CHECK(status == common::Status::kNotSupported);  // Windows has no real-time policies.
+#if defined(_WIN32) || defined(__APPLE__)
+    CHECK(status == common::Status::kNotSupported);  // Windows, macOS and iOS have no real-time policies.
 #else
     // Unprivileged environments (CI, WSL without rtprio limits) must report, not silently ignore.
     CHECK((status == common::Status::kOk) || (status == common::Status::kPermissionDenied));
@@ -156,7 +156,7 @@ TEST_CASE(current_thread_configuration) {
         CHECK(common::is_ok(common::get_current_thread_scheduling(policy, priority)));
         CHECK(policy == common::SchedPolicy::kOther);
         CHECK(priority == 0);
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__APPLE__)
         CHECK(common::set_current_thread_scheduling(common::SchedPolicy::kRoundRobin, 10) ==
               common::Status::kNotSupported);
 #endif

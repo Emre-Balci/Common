@@ -42,7 +42,10 @@ TEST_CASE(periodic_timer_reports_overrun) {
     common::PeriodicTimer timer{1ms};
     timer.start();
     CHECK(common::is_ok(common::sleep_for(5ms)));  // Simulated overrun of the loop body.
+    const common::TimePoint overrun_end{common::MonotonicClock::now()};
     CHECK(timer.wait() == common::Status::kDeadlineMissed);
     CHECK(timer.missed_count() >= 4U);
-    CHECK(timer.activation_time() > (common::MonotonicClock::now() - 1ms));
+    // Realigned to the next activation, not one of the missed ones. (Not "within 1 ms of now": a
+    // loaded machine, such as a macOS CI runner, can wake up later than that.)
+    CHECK(timer.activation_time() >= overrun_end);
 }
