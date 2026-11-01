@@ -413,7 +413,8 @@ Status File::open(const char* const path, const FileOptions& options) noexcept {
     }
 #else
     if (is_ok(status)) {
-        const mode_t mode{options.permissions};
+        // mode_t is 16 bits on macOS and iOS; validate() checked that the permissions fit in 0xFFF.
+        const mode_t mode{static_cast<mode_t>(options.permissions)};
         int descriptor{-1};
         status = open_with_restart(path, open_flags(options), mode, descriptor);
         if (is_ok(status)) {
@@ -890,7 +891,8 @@ Status create_directory(const char* const path, const std::uint32_t permissions)
             status = last_error();
         }
 #else
-        const mode_t mode{permissions};
+        // mode_t is 16 bits on macOS and iOS; the permissions were checked to fit in 0xFFF.
+        const mode_t mode{static_cast<mode_t>(permissions)};
         status = (::mkdir(path, mode) == 0) ? Status::kOk : last_error();
 #endif
     }
