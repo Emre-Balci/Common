@@ -372,9 +372,15 @@ TEST_CASE(serial_port_settings) {
     options.parity = common::Parity::kEven;
     options.stop_bits = common::StopBits::kTwo;
     options.flow_control = common::FlowControl::kRtsCts;
-    // A pseudo-terminal accepts tcsetattr() but drops parity; the read-back check catches that.
+#if defined(__APPLE__)
+    // A pseudo-terminal of macOS and iOS keeps the parity.
+    REQUIRE(common::is_ok(port.open(terminal.slave_path(), options)));
+    CHECK(common::is_ok(port.close()));
+#else
+    // A pseudo-terminal of Linux accepts tcsetattr() but drops parity; the read-back check catches that.
     CHECK(port.open(terminal.slave_path(), options) == common::Status::kNotSupported);
     CHECK(!port.is_open());
+#endif
 
     options.parity = common::Parity::kNone;
     REQUIRE(common::is_ok(port.open(terminal.slave_path(), options)));
@@ -398,12 +404,15 @@ TEST_CASE(serial_port_exclusive_and_move) {
     common::SerialPort first{};
     REQUIRE(common::is_ok(first.open(terminal.slave_path(), common::SerialOptions{})));
 
-    // TIOCEXCL keeps a second handle out, except for processes with CAP_SYS_ADMIN.
+    // TIOCEXCL keeps a second handle out, except for processes with CAP_SYS_ADMIN. The pseudo-terminals
+    // of macOS and iOS do not enforce it.
     common::SerialPort second{};
+#if !defined(__APPLE__)
     if (::geteuid() != 0U) {
         CHECK(second.open(terminal.slave_path(), common::SerialOptions{}) == common::Status::kResourceLimit);
         CHECK(!second.is_open());
     }
+#endif
 
     common::SerialPort moved{std::move(first)};
     CHECK(!first.is_open());  // NOLINT(bugprone-use-after-move,hicpp-invalid-access-moved): moved-from state.
