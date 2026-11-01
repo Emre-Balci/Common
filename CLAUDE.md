@@ -5,11 +5,20 @@ A C++17 real-time foundation library for Linux that also builds and runs on Wind
 README.md for the components and the rules.
 
 ## Layout
-Headers are grouped by purpose in `include/common/<group>/`: `core`, `numeric`, `containers`,
-`concurrency`, `time`, `system`, `diagnostics`, `control`, `protocol`, `file`. Sources mirror them in
-`src/<group>/` (internal helpers in `src/detail/`), tests in `tests/<group>/`. A new component goes
-in the matching group and is added to `CMakeLists.txt`, `tests/CMakeLists.txt`,
-`include/common/common.hpp` and the README tables.
+The project builds two libraries whose headers share the include root, grouped by purpose in
+`include/common/<group>/`:
+- `common-base` (`common::base`), the real-time foundation: `core`, `numeric`, `containers`,
+  `concurrency`, `time`, `system`, `diagnostics`, `control`, `protocol`, `file`;
+- `common` (`common::common`), patterns for building applications on it: `functional`, `object`,
+  `event`, `state`, `task`, `app`. It links `common-base` publicly.
+
+Sources mirror the groups in `src/<group>/` (internal helpers of `common-base` in `src/detail/`),
+tests in `tests/<group>/`. A new component goes in the matching group and is added to its library in
+`CMakeLists.txt`, to its test program in `tests/CMakeLists.txt` (`common_base_tests` or
+`common_tests`), to its umbrella header (`include/common/base.hpp` or `include/common/common.hpp`)
+and to the README tables. A new group of `common` also goes into `COMMON_GROUPS` in
+`CMakeLists.txt`. `common-base` never includes a header of `common`: the `common_base_layering` test
+fails if one of its files does.
 
 ## Platforms
 Platform code sits in `#if defined(_WIN32)` / `#else` blocks next to the POSIX code, so both stay
@@ -49,9 +58,31 @@ blocks. There is no Mac here: those blocks are only reviewed, and the README's t
 - Match the existing style: 4-space indent, 120 columns, `lower_case` functions,
   `CamelCase` types, `kConstant`, `member_`.
 
+## Rules learned building common (verified on all toolchains)
+- A class derived from `Task`, `Unit` or `Object` is `final`, or declares a protected non-virtual
+  destructor and no friends. A `friend` in a polymorphic class with a protected destructor makes GCC's
+  `-Wnon-virtual-dtor` fail: give other classes access through a passkey (see `detail::TaskKey`).
+- A type published through `SeqLock` is trivial (no default member initialisers): GCC 9's
+  `-Wclass-memaccess` rejects the memcpy otherwise.
+- Write defaulted default constructors as `X() noexcept = default;` (MSVC 19.32 deduces
+  potentially-throwing for `std::array<ClassType, N>` members), and test conditions on non-type
+  template parameters with `if constexpr` (MSVC C4127).
+- A static data member template of a class template is MSVC C4268: put such tables in a nested class
+  template (see `detail::inplace_function::Thunks`).
+- GCC 9's `-Wshadow` flags a function-pointer parameter named like a member function; Clang's
+  `-Wunused-lambda-capture` flags capturing a constant.
+- libc++ (the NDK) does not mark `std::string_view(const char*)` noexcept: pass a `string_view`, not a
+  literal, where a construction must be nothrow (e.g. `ObjectPool::create`).
+- Do not name anything `emit`, `signals`, `slots` or `foreach` (Qt macros); `Signal::notify()`.
+- Status codes: `kAlreadyExists` for a duplicate registration (or a task already in a runner),
+  `kAlreadyRunning`/`kNotRunning` for start/stop, `kInvalidArgument` for a bad argument or a call in
+  the wrong state.
+
 ## Build & test
 Build in WSL (Ubuntu-24.04). When calling `wsl` from Git Bash on Windows, set `MSYS_NO_PATHCONV=1`.
 For loops or variables, put the commands in a script file, because `wsl.exe` mangles `$var`.
+Building on `/mnt/<drive>` is slow: copy the tree to the Linux file system first
+(`rsync -a --delete --exclude build --exclude .git /mnt/d/Repos/Common/ ~/common-work/`) and build there.
 
 ```bash
 cmake --preset gcc-debug && cmake --build --preset gcc-debug && ctest --preset gcc-debug
@@ -68,7 +99,10 @@ has miscompiled code at `/O2` that passed in Debug.
 
 For Android, set `ANDROID_NDK_HOME` and build `android-arm64` and `android-x86_64` (also
 warning-free), and run `ctest --preset android-x86_64`: its executables are static, so the tests run
-on the Linux host with bionic.
+on the Linux host with bionic. The NDK lives in WSL at `~/Android/Sdk/ndk/<revision>` (r29 is
+`29.0.14206865`). To install it, unzip `https://dl.google.com/android/repository/android-ndk-r29-linux.zip`
+(Ubuntu needs the `unzip` package; Python's zipfile loses the executable bits) and rename
+`android-ndk-r29` to the `Pkg.Revision` of its `source.properties`.
 
 For macOS and iOS, run the `portable` preset (it must pass too). On a Mac: `macos-debug`,
 `macos-release` and `ios`.

@@ -40,7 +40,8 @@ std::uint32_t failure_count() noexcept {
 
 }  // namespace test
 
-/// Usage: common_tests [substring]   runs the tests whose name contains substring.
+/// Usage: common_base_tests [substring] or common_tests [substring]: runs the tests whose name
+/// contains substring.
 int main(const int argc, const char* const argv[]) {
 #if defined(_WIN32)
     // A failure must end the run, not wait for someone to close a dialog: the debug C runtime reports

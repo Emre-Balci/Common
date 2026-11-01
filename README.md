@@ -4,15 +4,26 @@ A C++17 foundation library for real-time applications on Linux, such as automoti
 loops and trading systems. It provides the pieces a real-time program needs. On the
 real-time path, none of them allocate, block or throw, and every loop has a fixed upper bound.
 
+It is built as two libraries:
+
+| Library | CMake target | What it holds |
+|---|---|---|
+| `common-base` | `common::base` | The real-time foundation: error handling, arithmetic, containers, lock-free queues, time, threads, diagnostics, control, protocols and files ([components](#common-base-components)) |
+| `common` | `common::common` | Patterns for building larger applications on that foundation: lifecycle units, tasks with a scheduler and an executor, active objects, signals, state machines, object types and heap-free callables ([components](#common-components)). It links `common-base`, so `common::common` gives both |
+
+`common-base` builds on its own: none of its files includes a header of `common`, which a test
+checks.
+
 It also builds and runs on Windows with MSVC, for tools, simulators and development, where the
 same code compiles on both platforms; see [Windows](#windows) for what differs there. And on
 Android (64-bit, API level 28 or later), macOS and iOS, for apps and tools; see [Android](#android)
 and [macOS and iOS](#macos-and-ios).
 
-## Components
+## common-base components
 
-Headers are grouped by purpose in `include/common/<group>/`, and `#include "common/common.hpp"`
-pulls in everything. Sources and tests mirror the groups in `src/<group>/` and `tests/<group>/`.
+Headers are grouped by purpose in `include/common/<group>/`. `#include "common/base.hpp"` pulls in
+every header of `common-base`, and `#include "common/common.hpp"` those of both libraries. Sources
+and tests mirror the groups in `src/<group>/` and `tests/<group>/`.
 The last column says whether a component may be used on the real-time path.
 
 ### core: foundations every other header builds on
@@ -110,6 +121,67 @@ to the initialisation phase or to a non-real-time thread that real-time threads 
 | `file/mapped_file.hpp` | `MappedFile`: memory mapping set up during initialisation, e.g. for reference data or a persistent state block | reading a populated, locked mapping yes |
 | `file/serial_port.hpp` | `SerialPort`: raw-mode UART/USB-serial/pty with baud, parity, stop bits, RTS/CTS and exclusive access; reads and writes bounded by a `Deadline`; reports an unplugged device as `kDisconnected` | no |
 
+## common components
+
+Patterns for building larger applications (an ECU, a trading system, a simulator) from the pieces
+of `common-base`. They follow the same rules: no heap, no exceptions, bounded loops, and nothing
+that blocks on the real-time path. Headers are in `include/common/<group>/` like those of
+`common-base`; link `common::common`.
+
+Three base classes are designed to be derived from: `Task`, `Unit` and `Object`. A class derived from
+them is `final`, or, in the middle of a hierarchy, declares a protected non-virtual destructor and no
+friends (otherwise `-Wnon-virtual-dtor` or MSVC's C4265 fails the build).
+
+### functional: callables without heap
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `functional/inplace_function.hpp` | `InplaceFunction<R(Args...), Capacity>`: a callable (e.g. a lambda with captures) stored inside the object, as `std::function` without the heap. It must be `noexcept`, callable as const and return exactly `R`, so a dropped `[[nodiscard]] Status` does not compile | yes |
+
+### object: run-time types without RTTI
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `object/object_type.hpp` | `ObjectType` (name, optional id, parent; `is_a`), `ObjectTypeOf<T, Base>` for C++ classes, `TypeObject<Properties>` for types defined by data (the Type Object pattern, e.g. instrument types from reference data), the base `Object` and the checked `object_cast<T>` | yes |
+| `object/object_type_registry.hpp` | `ObjectTypeRegistry`: types found by name or id, objects created through factories that receive the type and per-instance arguments (e.g. units from a configuration file); `pool_factory()` creates them in an `ObjectPool` | `find` yes; `create`/`destroy` as the factory |
+
+### event: notification
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `event/signal.hpp` | `Signal<void(Args...), MaxSlots>` (observer pattern): `notify()` calls the connected slots in connection order; slots may connect and disconnect during a notification; `ScopedConnection` disconnects on destruction | yes |
+
+### state: state machines
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `state/state_machine.hpp` | `StateMachine<State, Event, Context, Data>`: table-driven, with guards, transition actions, entry/exit actions, event data and an observer; the validated tables (`Definition`) are shared by any number of machines, e.g. one per order | yes (the `Definition` is built during initialisation) |
+
+### task: work on threads
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `task/task.hpp` | `Task`: the interface of the scheduler and the executor (`run()`), with a state, statistics (execution times, overruns, deadline misses, missed activations) readable from any thread, and wait-free requests (`cancel`, `trigger`, `suspend`, `resume`) | `state()`, statistics, requests yes |
+| `task/task_scheduler.hpp` | `TaskScheduler`: a cyclic executive for periodic tasks (period, offset, priority, budget, deadline) and triggered tasks, on a thread of its own or driven by `run_once()`; a late task runs its latest activation and counts the skipped ones | `run_once()` yes; `add`/`start`/`stop` init phase |
+| `task/task_executor.hpp` | `TaskExecutor`: a fixed pool of worker threads for one-shot jobs submitted from any thread without blocking; `stop()` drains or cancels, and never loses an accepted job | `submit()` yes; `start`/`stop` no |
+| `task/active_object.hpp` | `ActiveObject`: a thread of its own that runs commands (lambdas) posted from any thread one at a time, so the state they touch needs no locks; a poll hook for the thread's periodic work, e.g. a `TimerWheel` | `post()` yes; `start`/`stop` no |
+
+The runners (`TaskScheduler`, `TaskExecutor`, `ActiveObject`) beat `Heartbeat`s for a `Watchdog`,
+parked (`TimePoint::max()`) while they are not running, so that supervision set up during
+initialisation reports neither before the start nor after an orderly stop. They can be started again
+after `stop()`.
+
+### app: application structure
+
+| Header | Purpose | RT-path safe |
+|---|---|---|
+| `app/unit.hpp` | `Unit`: a part of an application with `on_initialize`/`on_start`/`on_stop`/`on_shutdown` hooks and dependencies on other units; the header shows how a unit owns tasks, active objects and signal connections | `state()` yes; lifecycle init phase |
+| `app/unit_manager.hpp` | `UnitManager`: brings the units up in dependency order and down in reverse; checks the wiring before any hook runs, and on a failing hook takes down exactly what the same call brought up | no (init and shutdown phase) |
+
+See [examples/unit_application.cpp](examples/unit_application.cpp) for an application built from
+these patterns: vehicle types defined by data, a periodic sensor task publishing its speed through a
+signal, a control unit's mode state machine, a logger active object, and a summary job at shutdown.
+
 ## Real-time rules this library follows (and you should too)
 
 1. **Two phases.** Initialisation may allocate, block and fail. After it ends, the
@@ -160,7 +232,13 @@ cmake --preset gcc-debug          # also: gcc-release, clang-debug, clang-releas
 cmake --build --preset gcc-debug
 ctest --preset gcc-debug
 ./build/gcc-debug/examples/rt_periodic_loop 1 2000   # [cpu] [cycles]
+./build/gcc-debug/examples/unit_application 500 truck   # [milliseconds] [car|truck]
 ```
+
+`ctest` runs `common_base_tests` (the tests of `common-base`, linked with it alone), `common_tests`
+(the tests of `common`) and `common_base_layering`, the check that `common-base` includes no header
+of `common`. A test program also runs on its own, optionally with a substring of test names, e.g.
+`./build/gcc-debug/tests/common_tests signal`.
 
 Always run the `tsan` and `asan` presets after changing anything concurrent. The `tidy` preset
 needs `sudo apt install clang-tidy`.
@@ -228,6 +306,11 @@ FetchContent_MakeAvailable(common)
 
 target_link_libraries(my_app PRIVATE common::common common::options)
 ```
+
+`common::common` brings `common-base` with it. A program that only needs the real-time foundation
+links `common::base` instead (the target itself is `common-base`). The libraries are
+`libcommon-base.a` and `libcommon.a` (`common-base.lib` and `common.lib` on Windows); outside CMake,
+link both, `common` first.
 
 `common::options` applies the same warnings, `-Werror` (when building this project at top level),
 `-ffp-contract=off` and `-fno-exceptions -fno-rtti` to your target. Leave it out if you need
@@ -340,9 +423,14 @@ Documented deviations (each is also marked in the code):
 | 19.0.2 function-like macros | `COMMON_ASSERT` | Needs call-site file/line and the expression text |
 | 15.1.3 implicit converting constructors | `Span` | Like `std::span`: a container or `Span<T>` can be passed where a span (of const) is expected; it only creates a view |
 | 30.0.1 `<cstdio>` | `rename_file` (Linux) | `rename()` is declared in `<cstdio>`, but it is the POSIX call that replaces a file atomically; no stream I/O is used |
-| 21.6.3 advanced memory management | `StaticVector`, `ObjectPool` | Placement new into owned, aligned inline storage; this is what removes heap use |
-| 8.2.5 `reinterpret_cast` | `StaticVector`, `ObjectPool`, `RtThread` (Windows) | Access to objects created in raw storage (with `std::launder`) and an address range check; `_beginthreadex()` returns the thread's `HANDLE` as an integer |
+| 21.6.3 advanced memory management | `StaticVector`, `ObjectPool`, `InplaceFunction` | Placement new into owned, aligned inline storage; this is what removes heap use |
+| 8.2.5 `reinterpret_cast` | `StaticVector`, `ObjectPool`, `InplaceFunction`, `RtThread` (Windows) | Access to objects created in raw storage (with `std::launder`) and an address range check; `_beginthreadex()` returns the thread's `HANDLE` as an integer |
 | 21.2.4 `offsetof` | `rename_file` (Windows) | `FILE_RENAME_INFO` ends in a variable-length name, which starts at `offsetof(FILE_RENAME_INFO, FileName)` |
 | 10.4.1 `asm` | `cpu_relax`, FPCR access (AArch64 only) | No intrinsic exists |
+
+For projects that use the object types of `common`: each class of an `Object` hierarchy declares its
+own `kType`, which hides its base's (`object_cast` relies on that and checks it at compile time). If a
+checker applies Rule 6.4.1 (hiding) to class scopes, the project records a deviation for this idiom;
+the library itself hides nothing.
 
 Tests and examples use `<cstdio>` and `std::thread` and are outside the compliance scope.
