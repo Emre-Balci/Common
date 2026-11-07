@@ -1,6 +1,6 @@
 # common — notes for coding agents
 
-These notes are for every agent working on this repository (Claude Code, OpenCode, Codex, Hermes, …).
+These notes are for every agent working on this repository (Claude Code, OpenCode, Codex, …).
 `CLAUDE.md` only imports this file, so put shared instructions here, not there.
 
 A C++17 real-time foundation library for Linux that also builds and runs on Windows (MSVC), Android
@@ -116,6 +116,7 @@ agent's session:
 - Each task has its own branch `task/<name>` and git worktree, made by `scripts/agent-task.sh`
   (`scripts/agent-task.sh <agent> <name> "<instructions>"`; `list` and `remove <name>` too).
   Work only in that worktree, and commit on that branch.
+- In VS Code, Terminal > Run Task > "Agent: …" does the same (run, open, list, remove, model status).
 - `.agents/handoffs/<name>.md` is the task's handoff, in the format of `.agents/handoff-template.md`.
   Read it before starting. Before stopping, update it (State, Not verified, Next steps) so that
   another agent can continue, and commit it with your work.

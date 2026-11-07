@@ -7,8 +7,8 @@
 #   scripts/agent-task.sh list                                    list task worktrees
 #   scripts/agent-task.sh remove <task>                           remove a task's worktree (keeps the branch)
 #
-# Agents: claude, opencode, codex, hermes. -p runs the agent once without its interactive UI and
-# returns when it is done (claude -p, opencode run, codex exec, hermes chat --oneshot), for scripts
+# Agents: claude, opencode, codex. -p runs the agent once without its interactive UI and
+# returns when it is done (claude -p, opencode run, codex exec), for scripts
 # and for one agent delegating to another.
 #
 # Tiers, which choose the agent and the model (see "Which agent" in AGENTS.md):
@@ -93,8 +93,8 @@ case "$agent" in
         tier=small
         model="${AGENT_SMALL_MODEL:-llamacpp/local}"
         ;;
-    claude | opencode | codex | hermes) ;;
-    *) die "unknown agent '$agent' (heavy, small, claude, opencode, codex, hermes)" ;;
+    claude | opencode | codex) ;;
+    *) die "unknown agent '$agent' (heavy, small, claude, opencode, codex)" ;;
 esac
 command -v "$agent" >/dev/null || die "'$agent' is not on PATH"
 
@@ -207,13 +207,11 @@ if [[ "$once" == true ]]; then
             exec opencode run "${model_args[@]}" "$prompt" </dev/null
             ;;
         codex) exec codex exec "$prompt" ;;
-        hermes) exec hermes chat --oneshot -q "$prompt" ;;
     esac
 else
     case "$agent" in
         claude) exec claude "${model_args[@]}" "$prompt" ;;
         opencode) exec opencode "${model_args[@]}" --prompt "$prompt" . ;;
         codex) exec codex "$prompt" ;;
-        hermes) exec hermes chat -q "$prompt" ;;
     esac
 fi
