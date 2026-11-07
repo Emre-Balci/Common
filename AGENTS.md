@@ -121,3 +121,19 @@ agent's session:
   another agent can continue, and commit it with your work.
 - Delete the handoff in the branch's last commit before it is merged, so `main` keeps only the template.
 - Never push, merge into `main` or delete branches unless the user asks.
+
+## Which agent
+`scripts/agent-task.sh` has two tiers; pick one per task (a task can move to the other later through its
+handoff):
+- `heavy` (Claude Code, Opus): anything that touches the rules above in a way that needs judgement —
+  lock-free and real-time code, public API or header design, platform ports, MISRA deviations, hard
+  bugs, reviews, and tasks that need the full build matrix. When unsure, use `heavy`.
+- `small` (OpenCode, the local model): mechanical, well-bounded work — comments and docs, renames,
+  adding a test case for existing behaviour, formatting, README table rows. The local model is small:
+  give it one narrow goal and the files to touch, and have a `heavy` task review its branch before merging.
+
+The local model is llama.cpp's `llama-server` on Windows, started with
+`llama-server -m TwIL-8B.Q4_K_M.gguf --host 0.0.0.0 --port 8080 -c 16384 -ngl 99 --jinja`.
+`-c` must match `limit.context` in `~/.config/opencode/opencode.jsonc`. `--host 0.0.0.0` is needed because
+WSL reaches Windows through its gateway address, not `localhost`; Windows Firewall must allow inbound
+TCP 8080 from the WSL network.
