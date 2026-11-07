@@ -19,6 +19,7 @@
 #   AGENT_HEAVY_MODEL  model of the heavy tier (default: opus)
 #   AGENT_SMALL_MODEL  model of the small tier (default: llamacpp/local, see ~/.config/opencode)
 #   AGENT_SMALL_TIMEOUT  seconds a one-shot small run may take (default 900)
+#   (exit status of a one-shot small run: the agent's own, or 3 if it ended normally but changed no file)
 #   LLAMA_URL          base URL of llama-server's OpenAI API, used by OpenCode's llamacpp provider
 #                      (default: port 8080 on the Windows host, which WSL reaches at its gateway)
 #   AGENT_WORKTREES  where worktrees go (default ~/agent-worktrees, on the Linux file system, because
@@ -148,20 +149,36 @@ and commit your work and the handoff on $branch. Do not push or merge."
 fi
 
 # Runs after a small-tier one-shot run: records what happened in the handoff, whatever the model did.
+# A small model can report success without having changed anything (or having changed only the handoff),
+# so the run counts as done only if a file other than a handoff differs from where the branch started.
+# Sets small_status: the agent's exit status, or 3 if it exited normally but changed nothing.
 small_finish() {
-    local status="$1" started="$2"
+    local status="$1" started="$2" base changed
+    # The branch's first reflog entry is the commit it was created from.
+    base="$(git reflog show --format=%H "$branch" | tail -n 1)"
+    changed="$({ git diff --name-only "$base" HEAD; git diff --name-only HEAD; git ls-files --others --exclude-standard; } |
+        sort -u | grep -v '^\.agents/handoffs/' || true)"
+    if [[ "$status" -eq 0 && -z "$changed" ]]; then
+        status=3
+    fi
     {
         printf '\n## Last run (%s, small tier, %s)\n' "$(date '+%F %T')" "$model"
         printf -- '- Agent exit status %s after %s s.\n' "$status" "$((SECONDS - started))"
+        if [[ -n "$changed" ]]; then
+            printf -- '- Files changed (besides handoffs):\n'
+            printf '%s\n' "$changed" | sed 's/^/  - /'
+        else
+            printf -- '- **No file was changed besides handoffs: the task is NOT done, whatever the agent said.**\n'
+        fi
         printf -- '- Commits on this branch since its start:\n'
-        # The branch's first reflog entry is the commit it was created from.
-        git log --format='  - %h %s' "$(git reflog show --format=%H "$branch" | tail -n 1)..HEAD" 2>/dev/null || true
+        git log --format='  - %h %s' "$base..HEAD" 2>/dev/null || true
         printf -- '- Uncommitted changes:\n'
         git status --short -- . ":(exclude)$handoff" | sed 's/^/  - /'
         printf -- '- Not reviewed: have a `heavy` task check this branch before it is merged.\n'
     } >>"$handoff"
     git add -- "$handoff"
     git commit -q -m "Handoff: record the small-tier run of $task" -- "$handoff" || true
+    small_status=$status
 }
 
 cd "$dir"
@@ -184,7 +201,8 @@ if [[ "$once" == true ]]; then
                 timeout "${AGENT_SMALL_TIMEOUT:-900}" opencode run "${model_args[@]}" "$prompt" </dev/null ||
                     status=$?
                 small_finish "$status" "$started"
-                exit "$status"
+                echo "agent-task: small run ended with status $small_status (3 = nothing was changed)" >&2
+                exit "$small_status"
             fi
             exec opencode run "${model_args[@]}" "$prompt" </dev/null
             ;;

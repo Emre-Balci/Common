@@ -128,11 +128,14 @@ handoff):
 - `heavy` (Claude Code, Opus): anything that touches the rules above in a way that needs judgement —
   lock-free and real-time code, public API or header design, platform ports, MISRA deviations, hard
   bugs, reviews, and tasks that need the full build matrix. When unsure, use `heavy`.
-- `small` (OpenCode, the local model): mechanical, well-bounded work — comments and docs, renames,
-  adding a test case for existing behaviour, formatting, README table rows. The local model is small:
-  give it one narrow goal and the files to touch, and have a `heavy` task review its branch before merging.
-  It reads `.agents/small-rules.md`, not this file, and `scripts/agent-task.sh` writes its handoff entry
-  (a run log) after it exits, so it does not edit the handoff.
+- `small` (OpenCode, the local model): single-spot, well-bounded edits — add a comment or a doc line, add or
+  fix one line in one file, a README table row. Benchmarked on this machine (TwIL-8B, Gemma 12B, Qwen3 8B),
+  the models did such edits but failed a rename across several places in one file, and could report success
+  with nothing, or the wrong file, changed. So: one narrow goal, the exact file, and no multi-place changes;
+  never trust the model's summary. `scripts/agent-task.sh -p small` exits with status 3 when no file besides
+  a handoff changed, and a `heavy` task must review every small branch before it is merged.
+  The model reads `.agents/small-rules.md`, not this file, and the script writes its handoff entry (a run
+  log) after it exits, so it does not edit the handoff.
 
 The local model is llama.cpp's `llama-server` on Windows, started with
 `llama-server -m TwIL-8B.Q4_K_M.gguf --host 0.0.0.0 --port 8080 -c 16384 -ngl 99 --jinja`.
