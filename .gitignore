@@ -5,3 +5,4 @@ compile_commands.json
 *.swp
 .vscode/*
 !.vscode/extensions.json
+!.vscode/tasks.json

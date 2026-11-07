@@ -1,0 +1,77 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Agent: run task (one-shot)",
+            "detail": "Runs heavy (Claude Opus) or small (local model) on a task in its own worktree and returns when done.",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/agent-task.sh",
+            "args": [
+                "-p",
+                "${input:agentTier}",
+                "${input:agentTaskName}",
+                { "value": "${input:agentInstructions}", "quoting": "strong" }
+            ],
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+        },
+        {
+            "label": "Agent: open task (interactive)",
+            "detail": "Starts the agent's own UI in the task's worktree. Leave the instructions empty to continue an existing task.",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/agent-task.sh",
+            "args": [
+                "${input:agentTier}",
+                "${input:agentTaskName}",
+                { "value": "${input:agentInstructions}", "quoting": "strong" }
+            ],
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "dedicated", "focus": true }
+        },
+        {
+            "label": "Agent: list task worktrees",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/agent-task.sh",
+            "args": ["list"],
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+        },
+        {
+            "label": "Agent: remove task worktree",
+            "detail": "Refuses if the worktree has uncommitted changes. The branch is kept.",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/agent-task.sh",
+            "args": ["remove", "${input:agentTaskName}"],
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+        },
+        {
+            "label": "Agent: local model server status",
+            "detail": "Checks that llama-server on Windows answers (WSL reaches it at the Windows host address).",
+            "type": "shell",
+            "command": "curl -sS --max-time 5 \"http://$(ip route | awk '/^default/{print $3; exit}'):8080/health\"; echo",
+            "problemMatcher": [],
+            "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "agentTier",
+            "type": "pickString",
+            "description": "heavy = Claude Code with Opus (subscription); small = local model, single-spot edits only",
+            "options": ["heavy", "small"],
+            "default": "heavy"
+        },
+        {
+            "id": "agentTaskName",
+            "type": "promptString",
+            "description": "Task name: lower-case letters, digits and '-' (at most 48). Names the branch task/<name>."
+        },
+        {
+            "id": "agentInstructions",
+            "type": "promptString",
+            "description": "Instructions (the goal of a new task; optional when continuing one)",
+            "default": ""
+        }
+    ]
+}
