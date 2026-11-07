@@ -157,7 +157,7 @@ small_finish() {
         # The branch's first reflog entry is the commit it was created from.
         git log --format='  - %h %s' "$(git reflog show --format=%H "$branch" | tail -n 1)..HEAD" 2>/dev/null || true
         printf -- '- Uncommitted changes:\n'
-        git status --short | sed 's/^/  - /'
+        git status --short -- . ":(exclude)$handoff" | sed 's/^/  - /'
         printf -- '- Not reviewed: have a `heavy` task check this branch before it is merged.\n'
     } >>"$handoff"
     git add -- "$handoff"
