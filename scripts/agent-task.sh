@@ -113,7 +113,7 @@ echo "agent-task: $agent on $branch in $dir" >&2
 if [[ "$once" == true ]]; then
     case "$agent" in
         claude) exec claude -p "$prompt" ;;
-        opencode) exec opencode run "$prompt" ;;
+        opencode) exec opencode run "$prompt" </dev/null ;; # it waits on a stdin that is not a terminal
         codex) exec codex exec "$prompt" ;;
         hermes) exec hermes chat --oneshot -q "$prompt" ;;
     esac
