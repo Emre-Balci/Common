@@ -18,6 +18,7 @@
 # Environment:
 #   AGENT_HEAVY_MODEL  model of the heavy tier (default: opus)
 #   AGENT_SMALL_MODEL  model of the small tier (default: llamacpp/local, see ~/.config/opencode)
+#   AGENT_SMALL_TIMEOUT  seconds a one-shot small run may take (default 900)
 #   LLAMA_URL          base URL of llama-server's OpenAI API, used by OpenCode's llamacpp provider
 #                      (default: port 8080 on the Windows host, which WSL reaches at its gateway)
 #   AGENT_WORKTREES  where worktrees go (default ~/agent-worktrees, on the Linux file system, because
@@ -79,13 +80,16 @@ instructions="$*"
 check_task "$task"
 
 model=""
+tier=""
 case "$agent" in
     heavy)
         agent=claude
+        tier=heavy
         model="${AGENT_HEAVY_MODEL:-opus}"
         ;;
     small)
         agent=opencode
+        tier=small
         model="${AGENT_SMALL_MODEL:-llamacpp/local}"
         ;;
     claude | opencode | codex | hermes) ;;
@@ -127,11 +131,38 @@ if [[ ! -f "$dir/$handoff" ]]; then
     } >"$dir/$handoff"
 fi
 
-prompt="You are working on task '$task' in a git worktree on branch $branch. First read AGENTS.md \
+if [[ "$tier" == small ]]; then
+    # The small tier's window is 16k tokens: it gets a short rules file instead of AGENTS.md, and the
+    # script, not the model, writes the handoff's run log afterwards (see small_finish).
+    prompt="You are working on task '$task' in a git worktree on branch $branch. Read .agents/small-rules.md \
+and $handoff (its Goal is your task), then do the task. \
+${instructions:+Instructions for this session: $instructions } \
+When it is done, commit your changes on $branch with a short message. Do not edit $handoff. \
+Do not push or merge."
+else
+    prompt="You are working on task '$task' in a git worktree on branch $branch. First read AGENTS.md \
 and $handoff, which holds the goal and the state the previous agent left. \
 ${instructions:+Instructions for this session: $instructions } \
 Before you stop, update $handoff (State, Not verified, Next steps) so another agent can continue, \
 and commit your work and the handoff on $branch. Do not push or merge."
+fi
+
+# Runs after a small-tier one-shot run: records what happened in the handoff, whatever the model did.
+small_finish() {
+    local status="$1" started="$2"
+    {
+        printf '\n## Last run (%s, small tier, %s)\n' "$(date '+%F %T')" "$model"
+        printf -- '- Agent exit status %s after %s s.\n' "$status" "$((SECONDS - started))"
+        printf -- '- Commits on this branch since its start:\n'
+        # The branch's first reflog entry is the commit it was created from.
+        git log --format='  - %h %s' "$(git reflog show --format=%H "$branch" | tail -n 1)..HEAD" 2>/dev/null || true
+        printf -- '- Uncommitted changes:\n'
+        git status --short | sed 's/^/  - /'
+        printf -- '- Not reviewed: have a `heavy` task check this branch before it is merged.\n'
+    } >>"$handoff"
+    git add -- "$handoff"
+    git commit -q -m "Handoff: record the small-tier run of $task" -- "$handoff" || true
+}
 
 cd "$dir"
 echo "agent-task: $agent${model:+ ($model)} on $branch in $dir" >&2
@@ -144,7 +175,19 @@ if [[ "$once" == true ]]; then
             exec claude -p "${model_args[@]}" --permission-mode acceptEdits \
                 --allowedTools "Bash(git:*)" "Bash(cmake:*)" "Bash(ctest:*)" "Bash(ninja:*)" -- "$prompt"
             ;;
-        opencode) exec opencode run "${model_args[@]}" "$prompt" </dev/null ;; # waits on a non-terminal stdin
+        opencode)
+            if [[ "$tier" == small ]]; then
+                started=$SECONDS
+                status=0
+                # Closed stdin: opencode run waits on one that is not a terminal. The time limit
+                # keeps a model that loops from running for ever (AGENT_SMALL_TIMEOUT, seconds).
+                timeout "${AGENT_SMALL_TIMEOUT:-900}" opencode run "${model_args[@]}" "$prompt" </dev/null ||
+                    status=$?
+                small_finish "$status" "$started"
+                exit "$status"
+            fi
+            exec opencode run "${model_args[@]}" "$prompt" </dev/null
+            ;;
         codex) exec codex exec "$prompt" ;;
         hermes) exec hermes chat --oneshot -q "$prompt" ;;
     esac

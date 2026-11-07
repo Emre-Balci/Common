@@ -131,6 +131,8 @@ handoff):
 - `small` (OpenCode, the local model): mechanical, well-bounded work — comments and docs, renames,
   adding a test case for existing behaviour, formatting, README table rows. The local model is small:
   give it one narrow goal and the files to touch, and have a `heavy` task review its branch before merging.
+  It reads `.agents/small-rules.md`, not this file, and `scripts/agent-task.sh` writes its handoff entry
+  (a run log) after it exits, so it does not edit the handoff.
 
 The local model is llama.cpp's `llama-server` on Windows, started with
 `llama-server -m TwIL-8B.Q4_K_M.gguf --host 0.0.0.0 --port 8080 -c 16384 -ngl 99 --jinja`.
